@@ -96,12 +96,20 @@ void rtc_user_init_handler(void)
 		input_name[1] = '0' + i;
 		rtc_data_add_par(input_name, &out_volt[i], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 	}
+	
 	rtc_data_add_par("orbis", &orbisBuffer, RTC_TYPE_CHAR, sizeof(orbisBuffer), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("orbis_mt", &orbisMultiturn, RTC_TYPE_UINT32, sizeof(orbisMultiturn), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("orbis_pos", &orbisPosition, RTC_TYPE_UINT32, sizeof(orbisPosition), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("orbis_angle", &orbisAngle, RTC_TYPE_FLOAT, sizeof(orbisAngle), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("orbis_status", &orbisStatus, RTC_TYPE_UINT32, sizeof(orbisStatus), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("orbis_crc", &orbisCRC, RTC_TYPE_UINT32, sizeof(orbisCRC), rtc_data_trigger_read_only, NULL);
+
+	/* Set all output channels to 0 V. This is done here, and not in ad5064.c
+	   because the output function has been defined here. */
+	rtc_set_output(0, 0.0f);
+	rtc_set_output(1, 0.0f);
+	rtc_set_output(2, 0.0f);
+	rtc_set_output(3, 0.0f);
 
 	rtc_user_finished = 0;
 	rtc_user_init();
