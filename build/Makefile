@@ -6,6 +6,10 @@ ROOT=$(APP_ROOT)starterware/
 DEVICE=am335x
 EVM=beaglebone
 
+# New compilers have a prefix different from what StarterWare is used to
+PREFIX=arm-eabi-
+export PREFIX
+
 # Get the defaults from Starterware
 #   Note: this has been modified to find the correct GCC version (the LIB_GCC
 #     variable) and the CFLAGS have been modified to use the hard float
