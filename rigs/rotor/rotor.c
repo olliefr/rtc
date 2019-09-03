@@ -205,11 +205,13 @@ void update_target_angular_velocity(void *new_value, void *trigger_data); // Tri
 void update_input_filter(void *new_value, void *trigger_data); // Trigger
 void reset_error_and_status_flags(void *new_value, void *trigger_data); // Trigger
 void reset_pid_error_terms(void *new_value, void *trigger_data); // Trigger
-
 void reset_speed_history(void);
 
 void update_filter(struct biquad_filter_t *filter, float freq);
 
+void shutdown_motor(void);
+
+float sum(float list[], uint32_t n);
 float rad2rpm(float rad);
 float rpm2rad(float rpm);
 
@@ -335,6 +337,12 @@ void rtc_user_main(void)
   	}
 }
 
+
+/*
+ * AUX FUNCTIONS AHEAD...
+ */
+ 
+ 
 //	Calculate 1/tan(pi*x)
 float inv_tan_pi(float x)
 {
@@ -418,6 +426,13 @@ void update_input_filter(void *new_value, void *trigger_data)
 	}
 }
 
+// Shuts down the motor and updates the system's state variables to reflect that.
+void shutdown_motor(void)
+{
+	rtc_set_output(output_channel_enable_motor, MAXON_OFF);
+	rtc_set_output(output_channel_motor_set_level, 0.0f);
+}
+
 // Stop the system, clear the error flags and controller error terms
 void reset_error_and_status_flags(void *new_value, void *trigger_data)
 {
@@ -439,6 +454,17 @@ void reset_speed_history(void)
 {
 	speed_history_full = 0; // Flag to indicate that there is enough points to compute the mean value
 	speed_history_idx = 0;  // Index to where the next data point is saved
+}
+
+// Return the sum of an array of floating-point values.
+float sum(float list[], uint32_t n)
+{
+	float Sigma = 0.0f;
+	
+	for (uint32_t i = 0; i < n; i++)
+		Sigma += list[i];
+	
+	return Sigma;
 }
 
 // Input: speed in rad/s, Output: speed in revolutions per minute.
