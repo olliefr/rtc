@@ -205,11 +205,11 @@ static uint32_t request_reset_pid_error_terms;
 /* ************************************************************************ */
 
 // Triggers for various exported variables...
-void update_forcing_freq(void *new_value, void *trigger_data); // Trigger
+void update_forcing_freq(void *new_value, void *trigger_data);            // Trigger
 void update_target_angular_velocity(void *new_value, void *trigger_data); // Trigger
-void update_input_filter(void *new_value, void *trigger_data); // Trigger
-void reset_error_and_status_flags(void *new_value, void *trigger_data); // Trigger
-void reset_pid_error_terms(void *new_value, void *trigger_data); // Trigger
+void update_input_filter(void *new_value, void *trigger_data);            // Trigger
+void reset_error_and_status_flags(void *new_value, void *trigger_data);   // Trigger
+void reset_pid_error_terms(void *new_value, void *trigger_data);          // Trigger
 void reset_speed_history(void);
 
 float biquad_filter(float x, const struct biquad_filter_t *filter, float state[]);
