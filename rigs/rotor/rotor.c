@@ -154,9 +154,25 @@ static float lasers_transfer_f_gradient = 75.0f;
 static float lasers_transfer_f_intercept = -225.0f;
 
 // Rotary Encoder: voltage as read, and its interpretation as angular position,
-// as the proportion of 2*pi
+// as the proportion of 2*pi. The encoder's analogue signal is connected to input zero.
+static uint32_t encoder_input_channel;
 static float encoder_voltage;
 static float encoder_angular_position;
+static float encoder_angular_position_prev;
+static float encoder_speed_rpm;
+static float encoder_speed;     // in rad/s
+
+// Rotary Encoder: Maxon Motor Controller Escon 50/5 built-in encoder outputs
+// speed (12-bit resolution) as voltage. The linear range is set in ESCON
+// studio software and the values should match those below for correct conversion.
+static float encoder_low_voltage = 0.5f;
+static float encoder_low_speed_rpm = 0;
+static float encoder_high_voltage = 4.5f;
+static float encoder_high_speed_rpm = 3000;
+
+// Rotary Encoder: transfer function (voltage to SPEED) gradient and intercept
+static float encoder_transfer_f_gradient;
+static float encoder_transfer_f_intercept;
 
 // Set to enable the speed control, unset if safety feature is not desired
 static uint32_t enable_speed_safety_limit = 1;
@@ -210,12 +226,24 @@ void update_target_angular_velocity(void *new_value, void *trigger_data); // Tri
 void update_input_filter(void *new_value, void *trigger_data);            // Trigger
 void reset_error_and_status_flags(void *new_value, void *trigger_data);   // Trigger
 void reset_pid_error_terms(void *new_value, void *trigger_data);          // Trigger
+
+// Triggers for the rotary encoder (voltage to SPEED conversion related variables)
+void update_encoder_low_voltage(void *new_value, void *trigger_data);     // Trigger
+void update_encoder_low_speed_rpm(void *new_value, void *trigger_data);   // Trigger
+void update_encoder_high_voltage(void *new_value, void *trigger_data);    // Trigger
+void update_encoder_high_speed_rpm(void *new_value, void *trigger_data);  // Trigger
+
 void reset_speed_history(void);
+
+// Encoder transfer function converts input voltage to speed in rpm. It is linear, so it requires gradient and intercept values to operate.
+void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_speed_rpm, float encoder_high_voltage, float encoder_high_speed_rpm);
 
 float biquad_filter(float x, const struct biquad_filter_t *filter, float state[]);
 void update_filter(struct biquad_filter_t *filter, float freq);
 
 void lasers_compute_distance_from_voltage(void);
+void encoder_compute_speed_from_voltage(void);
+
 void shutdown_motor(void);
 
 float sum(float list[], uint32_t n);
@@ -364,6 +392,58 @@ float inv_tan_pi(float x)
 	vst1q_f32(cosine_f, cosine);
 
 	return (cosine_f[0]/sine_f[0]);
+}
+
+// Trigger function: on update, the transfer function for the encoder must be recomputed.
+void update_encoder_low_voltage(void *new_value, void *trigger_data)
+{
+	/* Extract the data from the pointers */
+	float new_encoder_low_voltage = *((float *)new_value);
+	
+	// TODO verify?
+	encoder_low_voltage = new_encoder_low_voltage;
+	
+	/* Update the transfer function */
+	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
+}
+
+// Trigger function: on update, the transfer function for the encoder must be recomputed.
+void update_encoder_low_speed_rpm(void *new_value, void *trigger_data)
+{
+	/* Extract the data from the pointers */
+	float new_encoder_low_speed_rpm = *((float *)new_value);
+	
+	// TODO verify?
+	encoder_low_speed_rpm = new_encoder_low_speed_rpm;
+	
+	/* Update the transfer function */
+	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
+}
+
+// Trigger function: on update, the transfer function for the encoder must be recomputed.
+void update_encoder_high_voltage(void *new_value, void *trigger_data)
+{
+	/* Extract the data from the pointers */
+	float new_encoder_high_voltage = *((float *)new_value);
+	
+	// TODO verify?
+	encoder_high_voltage = new_encoder_high_voltage;
+	
+	/* Update the transfer function */
+	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
+}
+
+// Trigger function: on update, the transfer function for the encoder must be recomputed.
+void update_encoder_high_speed_rpm(void *new_value, void *trigger_data)
+{
+	/* Extract the data from the pointers */
+	float new_encoder_high_speed_rpm = *((float *)new_value);
+	
+	// TODO verify?
+	encoder_high_speed_rpm = new_encoder_high_speed_rpm;
+	
+	/* Update the transfer function */
+	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
 }
 
 /* Trigger function.
@@ -524,4 +604,37 @@ void lasers_compute_distance_from_voltage(void)
 		else
 			lasers_output_mm[i] = lasers_transfer_f_gradient * voltage_read + lasers_transfer_f_intercept;
 	}
+}
+
+// Maxon Motor Escon 50/5 encoder returns speed in rpm (as voltage)
+void encoder_compute_speed_from_voltage(void)
+{
+	encoder_speed_rpm = encoder_voltage * encoder_transfer_f_gradient + encoder_transfer_f_intercept;
+	encoder_speed = rpm2rad(encoder_speed);
+}
+
+void encoder_compute_speed_from_position(void)
+{
+	encoder_speed = (encoder_angular_position_prev - encoder_angular_position) / time_delta;
+	encoder_speed_rpm = rad2rpm(encoder_speed);
+}
+
+// Solves a system of two linear equations in two variables in the most trivial way
+void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_speed_rpm, float encoder_high_voltage, float encoder_high_speed_rpm)
+{
+	float x1 = encoder_low_voltage;
+	float x2 = encoder_high_voltage;
+	
+	float y1 = encoder_low_speed_rpm;
+	float y2 = encoder_high_speed_rpm;
+	
+	float gradient, intercept;
+	
+	if ((y1 - y2) == 0) return;
+	
+	gradient = (x1 - x2) / (y1 - y2);
+	intercept = y1 - gradient * x1;
+	
+	encoder_transfer_f_gradient = gradient;
+	encoder_transfer_f_intercept = intercept;
 }
