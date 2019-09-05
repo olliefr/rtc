@@ -307,8 +307,23 @@ void rtc_user_init(void)
 	rtc_data_add_par("mean_speed", &mean_speed, RTC_TYPE_FLOAT, sizeof(mean_speed), rtc_data_trigger_read_only, NULL);
 
 	// The analogue voltage as read from the encoder and as a proportion of 2PI. This latter is computed from former.
+	rtc_data_add_par("encoder_input_channel",  &encoder_input_channel, RTC_TYPE_UINT32, sizeof(encoder_input_channel),  NULL, NULL);
 	rtc_data_add_par("encoder_voltage", &encoder_voltage, RTC_TYPE_FLOAT, sizeof(encoder_voltage), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("encoder_angular_position", &encoder_angular_position, RTC_TYPE_FLOAT, sizeof(encoder_angular_position), rtc_data_trigger_read_only, NULL);
+
+	// Rotary Encoder: the Maxon Motor Controller Escon 50/5 outputs a speed reading (as voltage), and the following values
+	// are required to convert that to RPM value.
+	rtc_data_add_par("encoder_low_voltage", &encoder_low_voltage, RTC_TYPE_FLOAT, sizeof(encoder_low_voltage), update_encoder_low_voltage, NULL);
+	rtc_data_add_par("encoder_low_speed_rpm", &encoder_low_speed_rpm, RTC_TYPE_FLOAT, sizeof(encoder_low_speed_rpm), update_encoder_low_speed_rpm, NULL);
+	rtc_data_add_par("encoder_high_voltage", &encoder_high_voltage, RTC_TYPE_FLOAT, sizeof(encoder_high_voltage), update_encoder_high_voltage, NULL);
+	rtc_data_add_par("encoder_high_speed_rpm", &encoder_high_speed_rpm, RTC_TYPE_FLOAT, sizeof(encoder_high_speed_rpm), update_encoder_high_speed_rpm, NULL);
+
+	// Rotary Encoder: the linear transfer function (voltage to SPEED). These are computed by the triggers for the above four variables.
+	rtc_data_add_par("encoder_transfer_f_gradient", &encoder_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_gradient), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("encoder_transfer_f_intercept", &encoder_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_intercept), rtc_data_trigger_read_only, NULL);
+
+	// Rotary Encoder: calculate the transfer function for the voltage to SPEED encoder
+	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
 
 	// Actions. Set to nonzero value to activate and the triggers will do the rest.
 	rtc_data_add_par("reset_error_and_status_flags", &request_reset_error_and_status_flags, RTC_TYPE_UINT32, sizeof(request_reset_error_and_status_flags), reset_error_and_status_flags, NULL);
