@@ -86,7 +86,7 @@ struct biquad_filter_t {
 /* ********************************************************************** */
 
 // Fourier calculations
-static float sinusoid_f[N_FOURIER_COEFF] MEM_ALIGN;  /* [sin(0*t), sin(1*t), sin(2*t), ..., cos(0*t), cos(1*t), cos(2*t), ...] */
+//static float sinusoid_f[N_FOURIER_COEFF] MEM_ALIGN;  /* [sin(0*t), sin(1*t), sin(2*t), ..., cos(0*t), cos(1*t), cos(2*t), ...] */
 
 // TIME-KEEPING is done both linearly (time) and (mod_2pi). Period start signals
 // the start of a new period, that is it is related to (mod_2pi). Linear time
@@ -100,7 +100,7 @@ static uint32_t period_start = 1;  /* signal the start of a new period */
 static float forcing_freq_hz = 10.0f;
 
 // Forcing frequency (angular). This is computed by the _hz setter.
-static float forcing_freq = 1.0f;
+static float forcing_freq;
 
 // CONTROL TARGET: angular velocity to maintain, in rpm
 static float rpm;
@@ -265,6 +265,9 @@ void rtc_user_init(void)
 	rtc_data_add_par("forcing_freq", &forcing_freq, RTC_TYPE_FLOAT, sizeof(forcing_freq), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("forcing_freq_hz", &forcing_freq_hz, RTC_TYPE_FLOAT, sizeof(forcing_freq_hz), update_forcing_freq, NULL);
 
+	// Update forcing frequency (rad/s) value
+	update_forcing_freq((void *)&forcing_freq_hz, NULL);
+
 	// Desired speed of rotation in RPM
 	rtc_data_add_par("rpm", &rpm, RTC_TYPE_FLOAT, sizeof(rpm), update_target_angular_velocity, NULL);
 
@@ -348,9 +351,6 @@ void rtc_user_init(void)
 	// Set up the filters
 	update_filter(&input_filter, pid_error_filter_freq);
 	input_filter.order = INPUT_FILTER_ORDER;
-	
-	// Forcing frequency in rad/s
-	update_forcing_freq((void *)&forcing_freq_hz, NULL);	
 }
 
 /* ************************************************************************ */
@@ -386,31 +386,47 @@ void rtc_user_main(void)
 		}
 	}
 	
+	// Sensing and PID output is computed at every tick, actuation is only done
+	// at the beginning of the a period, defined by the forcing_freq_hz variable...
+	
+	// Both filtered and raw PID error is calculated. This is useful for comparison.
+	pid_error_raw = target_angular_velocity - encoder_speed;
+	pid_error_filtered = biquad_filter(pid_error_raw, &input_filter, pid_error_filter_state);
+	
+	// Decide whether to use filtered or raw error value.
+	pid_error = enable_pid_error_filter ? pid_error_filtered : pid_error_raw;
+
+	// Error integral computed as per its standard definition.
+	// FIXME is there a risk of integral windup?
+	pid_error_integral += (pid_error * TIMER_PERIOD_FLOAT);
+	
+	// Error derivate -- multiplication by frequency is the same as division by the period
+	pid_error_derivative = (pid_error - pid_error_before) * TIMER_FREQ;
+	
+	// Compute the motor set level using PID principles.
+	motor_voltage_level = K_p * pid_error + K_i * pid_error_integral + K_d * pid_error_derivative;
+	
+	// Prepare for the next time slice by rotating the error term
+	pid_error_before = pid_error;
+	
+	// Save current speed in the history buffer (wraps over if full)
+	if (speed_history_idx >= SPEED_HISTORY_SIZE) {
+		speed_history_idx = 0;
+		speed_history_full = 1;
+	}
+	speed_history[speed_history_idx++] = encoder_speed_rpm;
+	
+	// Save angular position
+	// FIXME possibly do this AFTER control section
+	encoder_angular_position_prev = encoder_angular_position;
+	
 	/* ********************************************************************** */
 	/*  Real-time control */
 	/* ********************************************************************** */
 	// The control is run at forcing_freq_hz rate. The time_mod_2pi is set up in 
 	// the way that a new period begins exactly at forcing_freq_hz rate.
 	if (period_start) {		
-		// PID controller error terms -- raw and filtered. 
-		// Compute both -- this is useful for comparison.
-		pid_error_raw = target_angular_velocity - encoder_speed;
-		pid_error_filtered = biquad_filter(pid_error_raw, &input_filter, pid_error_filter_state);
-		
-		// Decide whether to use filtered or raw error value.
-		pid_error = enable_pid_error_filter ? pid_error_filtered : pid_error_raw;
-
-		// Error integral computed as per its standard definition.
-		// FIXME is there a risk of integral windup?
-		pid_error_integral += (pid_error * TIMER_PERIOD_FLOAT);
-		
-		// Error derivate -- multiplication by frequency is the same as division by the period
-		pid_error_derivative = (pid_error - pid_error_before) * TIMER_FREQ;
-		
-		// Compute the motor set level using PID principles.
-		motor_voltage_level = K_p * pid_error + K_i * pid_error_integral + K_d * pid_error_derivative;
-
-		// Clip motor voltage levels, if necessary. Clipping flags are not viewed as errors.
+		// Clip motor voltage levels, if necessary. Record the fact of clipping the output.
 		if (motor_voltage_level < motor_min_voltage) {
 			motor_voltage_level = motor_min_voltage;
 			motor_min_voltage_flag = 1;
@@ -422,21 +438,8 @@ void rtc_user_main(void)
 		// Motor control
 		rtc_set_output(output_channel_enable_motor, MAXON_ON);
 		rtc_set_output(output_channel_motor_set_level, motor_voltage_level);
-		
-		// Prepare for the next time slice by rotating the error term
-		pid_error_before = pid_error;
-		
-		// Save current speed in the history buffer (wraps over if full)
-		if (speed_history_idx >= SPEED_HISTORY_SIZE) {
-			speed_history_idx = 0;
-			speed_history_full = 1;
-		}
-		speed_history[speed_history_idx++] = encoder_speed_rpm;
-		
-		encoder_angular_position_prev = encoder_angular_position;
 	}
-
-
+	
 	/* ********************************************************************** */
 	/*  Update time */
 	/* ********************************************************************** */
