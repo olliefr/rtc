@@ -358,18 +358,90 @@ void rtc_user_main(void)
 {
 	static int32_t led = 0;
 
+	// Will be set to filtered or unfiltered value, depending on the settings
+	static float pid_error;
+	
 	/* ********************************************************************** */
 	/*  Pre-calculations */
 	/* ********************************************************************** */
 	lasers_compute_distance_from_voltage();
+	encoder_compute_speed_from_voltage();
+	
+	// If speed safety lockout has been activated, don't do anything, sit and 
+	// wait until the user resets the error flag.
+	if (speed_safety_limit_reached_flag)
+		goto finalise;
+	
+	// If speed limit is enabled, compute the mean speed, and shut down the rig
+	// if the limit has been reached.
+	if (speed_safety_limit_rpm > 0) {
+		// Only limit the speed once the history buffer is full (small timescale anyway)
+		if (speed_history_full) {
+			mean_speed = sum(speed_history, SPEED_HISTORY_SIZE) / SPEED_HISTORY_SIZE;
+			if (fabs(mean_speed) >= rpm2rad(speed_safety_limit_rpm)) {
+				shutdown_motor();
+				speed_safety_limit_reached_flag = 1;
+				goto finalise;
+			}
+		}
+	}
+	
 	/* ********************************************************************** */
 	/*  Real-time control */
 	/* ********************************************************************** */
+	// The control is run at forcing_freq_hz rate. The time_mod_2pi is set up in 
+	// the way that a new period begins exactly at forcing_freq_hz rate.
+	if (period_start) {		
+		// PID controller error terms -- raw and filtered. 
+		// Compute both -- this is useful for comparison.
+		pid_error_raw = target_angular_velocity - encoder_speed;
+		pid_error_filtered = biquad_filter(pid_error_raw, &input_filter, pid_error_filter_state);
+		
+		// Decide whether to use filtered or raw error value.
+		pid_error = enable_pid_error_filter ? pid_error_filtered : pid_error_raw;
+
+		// Error integral computed as per its standard definition.
+		// FIXME is there a risk of integral windup?
+		pid_error_integral += (pid_error * TIMER_PERIOD_FLOAT);
+		
+		// Error derivate -- multiplication by frequency is the same as division by the period
+		pid_error_derivative = (pid_error - pid_error_before) * TIMER_FREQ;
+		
+		// Compute the motor set level using PID principles.
+		motor_voltage_level = K_p * pid_error + K_i * pid_error_integral + K_d * pid_error_derivative;
+
+		// Clip motor voltage levels, if necessary. Clipping flags are not viewed as errors.
+		if (motor_voltage_level < motor_min_voltage) {
+			motor_voltage_level = motor_min_voltage;
+			motor_min_voltage_flag = 1;
+		} else if (motor_voltage_level > motor_max_voltage) {
+			motor_voltage_level = motor_max_voltage;
+			motor_max_voltage_flag = 1;
+		}
+
+		// Motor control
+		rtc_set_output(output_channel_enable_motor, MAXON_ON);
+		rtc_set_output(output_channel_motor_set_level, motor_voltage_level);
+		
+		// Prepare for the next time slice by rotating the error term
+		pid_error_before = pid_error;
+		
+		// Save current speed in the history buffer (wraps over if full)
+		if (speed_history_idx >= SPEED_HISTORY_SIZE) {
+			speed_history_idx = 0;
+			speed_history_full = 1;
+		}
+		speed_history[speed_history_idx++] = encoder_speed_rpm;
+		
+		encoder_angular_position_prev = encoder_angular_position;
+	}
+
 
 	/* ********************************************************************** */
 	/*  Update time */
 	/* ********************************************************************** */
 
+finalise:
 	// Linear time just ticks along for now...
 	time += 1;
 	if (time >= SAMPLE_FREQ) {
