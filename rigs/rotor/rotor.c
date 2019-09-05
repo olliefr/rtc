@@ -212,6 +212,7 @@ void reset_error_and_status_flags(void *new_value, void *trigger_data); // Trigg
 void reset_pid_error_terms(void *new_value, void *trigger_data); // Trigger
 void reset_speed_history(void);
 
+float biquad_filter(float x, const struct biquad_filter_t *filter, float state[]);
 void update_filter(struct biquad_filter_t *filter, float freq);
 
 void lasers_compute_distance_from_voltage(void);
@@ -420,6 +421,21 @@ void update_filter(struct biquad_filter_t *filter, float freq)
     filter->b[0] = b0;
     filter->b[1] = 2.0f*b0;
     filter->b[2] = b0;
+}
+
+//	A biquad filter
+float biquad_filter(float x, const struct biquad_filter_t *filter, float state[])
+{
+	float y = x;
+
+	for (int i = 0; i < filter->order; i++) {
+		float w = y + filter->a[0]*state[2*i+0] + filter->a[1]*state[2*i+1];
+		y = filter->b[0]*w + filter->b[1]*state[2*i+0] + filter->b[2]*state[2*i+1];
+		state[2*i+1] = state[2*i+0];
+		state[2*i+0] = w;
+	}
+
+	return y;
 }
 
 //	Update the coefficients of the input filter
