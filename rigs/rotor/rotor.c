@@ -139,12 +139,17 @@ static float pid_error_integral;
 // Lasers: displacement in mm
 static float lasers_output_mm[NUMBER_OF_LASERS];
 
-// Lasers: out of range voltage value
-static float lasers_out_of_range_voltage = 6.0f;
+// Lasers: voltage limits. For Omron ZX1-300 lasers with 250 Ohm resistor in 
+// the signal conditioner, the signal varies from 1 to 5 volts. 
+static float lasers_near_field_limit_volt = 5.0f;
+static float lasers_far_field_limit_volt  = 1.0f;
 
-// Laser transfer function gradient and intercept have been computed assuming
-// the resistor value in signal conditioner of 250 [Ohm], the near field of
-// -150 mm, and the far field of 150 mm. These are Omron ZX1-300 lasers.
+// Lasers: transfer function gradient and intercept have been computed assuming:
+//   * Omron ZX1-300 lasers: near field -150 mm (20 mA), far field 150 mm (4 mA)
+//   * all (three) lasers are identical
+//   * the resistor value in signal conditioner is 250 [Ohm]
+//
+// The calculations are in the `rig/Computing Lasers Transfer Function.pdf` file.
 static float lasers_transfer_f_gradient = 75.0f;
 static float lasers_transfer_f_intercept = -225.0f;
 
@@ -209,6 +214,7 @@ void reset_speed_history(void);
 
 void update_filter(struct biquad_filter_t *filter, float freq);
 
+void lasers_compute_distance_from_voltage(void);
 void shutdown_motor(void);
 
 float sum(float list[], uint32_t n);
@@ -311,7 +317,7 @@ void rtc_user_main(void)
 	/* ********************************************************************** */
 	/*  Pre-calculations */
 	/* ********************************************************************** */
-
+	lasers_compute_distance_from_voltage();
 	/* ********************************************************************** */
 	/*  Real-time control */
 	/* ********************************************************************** */
@@ -477,4 +483,29 @@ float rad2rpm(float rad)
 float rpm2rad(float rpm)
 {
 	return rpm * (M_2PI / 60.0f);
+}
+
+/*
+ * Converts all entries from laser voltage output array to displacement in mm,
+ * using the coefficients for the linear model. Assumes laser i is connected to
+ * input i. Assumes all lasers are identical (both the laser and the signal
+ * conditioner) so the same transfer function is applicable to all.
+ */
+void lasers_compute_distance_from_voltage(void)
+{
+	for (uint32_t i = 0; i < NUMBER_OF_LASERS; i++) {
+		float voltage_read;
+		
+		voltage_read = in_volt[i+1];
+		
+		// Is the value outside of legit range of the lasers? To understand the comparison:
+		// the laser outputs 4 to 20 mA, with the output being weaker at the distance,
+		// therefore the limit of the near field is larger amount, even closer distance
+		// would be even greater current; the far field is very weak signal, so going further
+		// means even weaker signal.
+		if (voltage_read < lasers_far_field_limit_volt || voltage_read > lasers_near_field_limit_volt)
+			lasers_output_mm[i] = NAN;
+		else
+			lasers_output_mm[i] = lasers_transfer_f_gradient * voltage_read + lasers_transfer_f_intercept;
+	}
 }
