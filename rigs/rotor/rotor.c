@@ -109,6 +109,8 @@ static float rpm;
 // by the update trigger of rpm variable.
 static float target_angular_velocity;
 
+// TODO incorporate motor_set_value limits: 0.000 volt -> 0.000 amps, 4.250 volt -> 5 amps
+ 
 // Motor control: two channels, "digital" to enable and set direction and analog to set value
 static uint32_t output_channel_enable_motor    = 1; /* Output U1 (unipolar) */
 static uint32_t output_channel_motor_set_level = 0; /* Output B0 (bipolar) */
@@ -165,9 +167,9 @@ static float encoder_speed;     // in rad/s
 // Rotary Encoder: Maxon Motor Controller Escon 50/5 built-in encoder outputs
 // speed (12-bit resolution) as voltage. The linear range is set in ESCON
 // studio software and the values should match those below for correct conversion.
-static float encoder_low_voltage = 0.5f;
+static float encoder_low_voltage = 0.250;
 static float encoder_low_speed_rpm = 0;
-static float encoder_high_voltage = 4.5f;
+static float encoder_high_voltage = 4;
 static float encoder_high_speed_rpm = 3000;
 
 // Rotary Encoder: transfer function (voltage to SPEED) gradient and intercept
@@ -220,6 +222,9 @@ static uint32_t request_reset_pid_error_terms;
 /* * Internal prototypes ************************************************** */
 /* ************************************************************************ */
 
+// Reset the whole system
+void bbb_reset(void *new_value, void *trigger_data);
+
 // Triggers for various exported variables...
 void update_forcing_freq(void *new_value, void *trigger_data);            // Trigger
 void update_target_angular_velocity(void *new_value, void *trigger_data); // Trigger
@@ -258,6 +263,8 @@ void rtc_user_init(void)
 {
 	char laser_name_volt[] = "laser#_output_volts";
 	char laser_name_displacement[] = "laser#_output_mm";
+
+	rtc_data_add_par("bbb_reset", &time, RTC_TYPE_UINT32, sizeof(time), bbb_reset, NULL);
 
 	// Tracking of time, linear and periodic counters are provided
 	rtc_data_add_par("time",  &time, RTC_TYPE_UINT32, sizeof(time), rtc_data_trigger_read_only, NULL);
@@ -314,6 +321,10 @@ void rtc_user_init(void)
 	rtc_data_add_par("encoder_voltage", &encoder_voltage, RTC_TYPE_FLOAT, sizeof(encoder_voltage), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("encoder_angular_position", &encoder_angular_position, RTC_TYPE_FLOAT, sizeof(encoder_angular_position), rtc_data_trigger_read_only, NULL);
 
+	// Rotary Encoder: speed, computed or read, depending on the encoder type
+	rtc_data_add_par("encoder_speed_rpm", &encoder_speed_rpm, RTC_TYPE_FLOAT, sizeof(encoder_speed_rpm), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("encoder_speed", &encoder_speed, RTC_TYPE_FLOAT, sizeof(encoder_speed), rtc_data_trigger_read_only, NULL);
+	
 	// Rotary Encoder: the Maxon Motor Controller Escon 50/5 outputs a speed reading (as voltage), and the following values
 	// are required to convert that to RPM value.
 	rtc_data_add_par("encoder_low_voltage", &encoder_low_voltage, RTC_TYPE_FLOAT, sizeof(encoder_low_voltage), update_encoder_low_voltage, NULL);
@@ -378,7 +389,7 @@ void rtc_user_main(void)
 		// Only limit the speed once the history buffer is full (small timescale anyway)
 		if (speed_history_full) {
 			mean_speed = sum(speed_history, SPEED_HISTORY_SIZE) / SPEED_HISTORY_SIZE;
-			if (fabs(mean_speed) >= rpm2rad(speed_safety_limit_rpm)) {
+			if (fabs(mean_speed) >= speed_safety_limit_rpm) {
 				shutdown_motor();
 				speed_safety_limit_reached_flag = 1;
 				goto finalise;
@@ -426,18 +437,20 @@ void rtc_user_main(void)
 	// The control is run at forcing_freq_hz rate. The time_mod_2pi is set up in 
 	// the way that a new period begins exactly at forcing_freq_hz rate.
 	if (period_start) {		
-		// Clip motor voltage levels, if necessary. Record the fact of clipping the output.
-		if (motor_voltage_level < motor_min_voltage) {
-			motor_voltage_level = motor_min_voltage;
-			motor_min_voltage_flag = 1;
-		} else if (motor_voltage_level > motor_max_voltage) {
-			motor_voltage_level = motor_max_voltage;
-			motor_max_voltage_flag = 1;
-		}
-
-		// Motor control
-		rtc_set_output(output_channel_enable_motor, MAXON_ON);
-		rtc_set_output(output_channel_motor_set_level, motor_voltage_level);
+		if (rpm != 0.0f) {
+			// Clip motor voltage levels, if necessary. Record the fact of clipping the output.
+			if (motor_voltage_level < motor_min_voltage) {
+				motor_voltage_level = motor_min_voltage;
+				motor_min_voltage_flag = 1;
+			} else if (motor_voltage_level > motor_max_voltage) {
+				motor_voltage_level = motor_max_voltage;
+				motor_max_voltage_flag = 1;
+			}
+	
+			// Motor control
+			rtc_set_output(output_channel_enable_motor, MAXON_ON);
+			rtc_set_output(output_channel_motor_set_level, motor_voltage_level);
+		}	
 	}
 	
 	/* ********************************************************************** */
@@ -564,7 +577,7 @@ void update_target_angular_velocity(void *new_value, void *trigger_data)
 	
 	// Full stop requested, stop the motor and reset the controller.
 	if (fabs(new_rpm) == 0) {
-		//shutdown_motor();
+		shutdown_motor();
 		reset_pid_error_terms(NULL, NULL);
 		reset_speed_history();
 	}
@@ -646,6 +659,7 @@ void reset_speed_history(void)
 {
 	speed_history_full = 0; // Flag to indicate that there is enough points to compute the mean value
 	speed_history_idx = 0;  // Index to where the next data point is saved
+	mean_speed = 0.0f;      // No history means no mean speed
 }
 
 // Return the sum of an array of floating-point values.
@@ -699,8 +713,10 @@ void lasers_compute_distance_from_voltage(void)
 // Maxon Motor Escon 50/5 encoder returns speed in rpm (as voltage)
 void encoder_compute_speed_from_voltage(void)
 {
+	encoder_voltage = in_volt[encoder_input_channel];
+	
 	encoder_speed_rpm = encoder_voltage * encoder_transfer_f_gradient + encoder_transfer_f_intercept;
-	encoder_speed = rpm2rad(encoder_speed);
+	encoder_speed = rpm2rad(encoder_speed_rpm);
 }
 
 void encoder_compute_speed_from_position(void)
@@ -709,7 +725,19 @@ void encoder_compute_speed_from_position(void)
 	encoder_speed_rpm = rad2rpm(encoder_speed);
 }
 
-// Solves a system of two linear equations in two variables in the most trivial way
+// Assuming the correspondence of voltage to speed is linear, one must have two data points
+// to figure out the linear transfer function. The following function computes the gradient
+// and the intercept of the transfer function given two voltage-to-speed conversiions. They
+// would be the same values as those set in the ESCON Studio.
+// 
+// Test data, computed manually (see Notes): 
+//   * encoder_low_voltage = 0.250 volts
+//   * encoder_low_speed_rpm = 0 rpm
+//   * encoder_high_voltage = 4 volts (this is max ESCON 50/5 output can do)
+//   * encoder_high_speed_rpm = 3000 rpm (this rig shouldn't even need this much)
+// 
+//  gradient = 800, intercept = -200
+//
 void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_speed_rpm, float encoder_high_voltage, float encoder_high_speed_rpm)
 {
 	float x1 = encoder_low_voltage;
@@ -720,11 +748,17 @@ void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_spee
 	
 	float gradient, intercept;
 	
+	// FIXME much better to look for a small value, which given it's a single precision FP number, would not divide delta x
 	if ((y1 - y2) == 0) return;
 	
-	gradient = (x1 - x2) / (y1 - y2);
-	intercept = y1 - gradient * x1;
+	gradient =  (y1 - y2) / (x1 - x2);
+	intercept = 0.5f * ((y1+y2) - gradient * (x1+x2));
 	
 	encoder_transfer_f_gradient = gradient;
 	encoder_transfer_f_intercept = intercept;
+}
+
+void bbb_reset(void *new_value, void *trigger_data)
+{
+	HWREG(SOC_PRM_DEVICE_REGS) |= 0x00000001;
 }
