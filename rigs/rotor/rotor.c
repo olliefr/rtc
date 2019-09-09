@@ -357,8 +357,8 @@ void rtc_user_init(void)
 		rtc_data_add_par(laser_name_volt, &in_volt[i+1], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 		rtc_data_add_par(laser_name_displacement, &lasers_output_mm[i], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 	}
-	rtc_data_add_par("lasers_transfer_f_gradient", &lasers_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_gradient), NULL, NULL);
-	rtc_data_add_par("lasers_transfer_f_intercept", &lasers_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_intercept), NULL, NULL);
+	rtc_data_add_par("lasers_transfer_f_gradient", &lasers_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_gradient), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("lasers_transfer_f_intercept", &lasers_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_intercept), rtc_data_trigger_read_only, NULL);
 
 	// Set up the filters
 	update_filter(&input_filter, pid_error_filter_freq);
