@@ -201,8 +201,13 @@ static uint32_t speed_history_full;
 
 // The mean spead will be calculated by averaging the full set of values from 
 // the speed_history array.
-static float mean_speed;
+static float mean_speed_rpm;
 
+// The maximum instantaneous speed ever recorded
+static float max_speed_rpm;
+
+// The mean_speed_rpm value that caused activation of the safety stop
+static float safety_triggered_speed_rpm;
 
 /******************************************************************************
  *
@@ -314,7 +319,9 @@ void rtc_user_init(void)
 	rtc_data_add_par("speed_safety_limit_rpm", &speed_safety_limit_rpm, RTC_TYPE_FLOAT, sizeof(speed_safety_limit_rpm), NULL, NULL);
 	rtc_data_add_par("speed_safety_limit_reached_flag",  &speed_safety_limit_reached_flag,  RTC_TYPE_UINT32, sizeof(speed_safety_limit_reached_flag), NULL, NULL);
 	rtc_data_add_par("speed_history", &speed_history, RTC_TYPE_FLOAT, sizeof(speed_history), rtc_data_trigger_read_only, NULL);
-	rtc_data_add_par("mean_speed", &mean_speed, RTC_TYPE_FLOAT, sizeof(mean_speed), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("mean_speed_rpm", &mean_speed_rpm, RTC_TYPE_FLOAT, sizeof(mean_speed_rpm), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("max_speed_rpm", &max_speed_rpm, RTC_TYPE_FLOAT, sizeof(max_speed_rpm), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("safety_triggered_speed_rpm", &safety_triggered_speed_rpm, RTC_TYPE_FLOAT, sizeof(safety_triggered_speed_rpm), rtc_data_trigger_read_only, NULL);
 
 	// The analogue voltage as read from the encoder and as a proportion of 2PI. This latter is computed from former.
 	rtc_data_add_par("encoder_input_channel",  &encoder_input_channel, RTC_TYPE_UINT32, sizeof(encoder_input_channel),  NULL, NULL);
@@ -389,11 +396,18 @@ void rtc_user_main(void)
 	// If speed limit is enabled, compute the mean speed, and shut down the rig
 	// if the limit has been reached.
 	if (speed_safety_limit_rpm > 0) {
+		
+		// Update the max speed ever recorded, if the need be
+		max_speed_rpm = (encoder_speed_rpm > max_speed_rpm) ? encoder_speed_rpm : max_speed_rpm;
+		
 		// Only limit the speed once the history buffer is full (small timescale anyway)
 		if (speed_history_full) {
-			mean_speed = sum(speed_history, SPEED_HISTORY_SIZE) / SPEED_HISTORY_SIZE;
-			if (fabs(mean_speed) >= speed_safety_limit_rpm) {
+			mean_speed_rpm = sum(speed_history, SPEED_HISTORY_SIZE) / SPEED_HISTORY_SIZE;
+			if (fabs(mean_speed_rpm) >= speed_safety_limit_rpm) {
+				
 				shutdown_motor();
+				
+				safety_triggered_speed_rpm = mean_speed_rpm;
 				speed_safety_limit_reached_flag = 1;
 				goto finalise;
 			}
@@ -660,9 +674,11 @@ void reset_pid_error_terms(void *new_value, void *trigger_data)
 
 void reset_speed_history(void)
 {
-	mean_speed = 0.0f;      // No history means no mean speed
 	speed_history_full = 0;
 	speed_history_idx  = 0;
+	mean_speed_rpm = 0.0f;
+	max_speed_rpm  = 0.0f;
+	safety_triggered_speed_rpm = 0.0f;
 }
 
 // Return the sum of an array of floating-point values.
