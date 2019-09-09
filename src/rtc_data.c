@@ -40,7 +40,7 @@
 
 
 #define MAX_PARS 256  /* maximum number of parameters */
-#define MAX_PAR_NAMES (64*MAX_PARS)  /* space allocated for parameter names */
+#define MAX_PAR_NAMES (128*MAX_PARS)  /* space allocated for parameter names */
 
 #define MAX_STREAMS 4  /* Assumed to be < 10 for ease of implementation */
 #define MAX_STREAM_CHANNELS 10
