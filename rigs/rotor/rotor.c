@@ -109,7 +109,7 @@ static float rpm;
 
 // CONTROL TARGET: angular velocity to maintain in rad/s. This value is computed
 // by the update trigger of rpm variable.
-static float target_angular_velocity;
+static float target_speed;
 
 // TODO incorporate motor_set_value limits: 0.000 volt -> 0.000 amps, 4.250 volt -> 5 amps
  
@@ -234,7 +234,7 @@ void bbb_reset(void *new_value, void *trigger_data);
 
 // Triggers for various exported variables...
 void update_forcing_freq(void *new_value, void *trigger_data);            // Trigger
-void update_target_angular_velocity(void *new_value, void *trigger_data); // Trigger
+void update_target_speed(void *new_value, void *trigger_data); // Trigger
 void update_input_filter(void *new_value, void *trigger_data);            // Trigger
 void reset_error_and_status_flags(void *new_value, void *trigger_data);   // Trigger
 void reset_pid_error_terms(void *new_value, void *trigger_data);          // Trigger
@@ -281,7 +281,7 @@ void rtc_user_init(void)
 	update_forcing_freq((void *)&forcing_freq_hz, NULL);
 
 	// Desired speed of rotation in RPM
-	rtc_data_add_par("rpm", &rpm, RTC_TYPE_FLOAT, sizeof(rpm), update_target_angular_velocity, NULL);
+	rtc_data_add_par("rpm", &rpm, RTC_TYPE_FLOAT, sizeof(rpm), update_target_speed, NULL);
 
 	// Motor: enable and set value channel numbers
 	rtc_data_add_par("output_channel_enable_motor",  &output_channel_enable_motor, RTC_TYPE_UINT32, sizeof(output_channel_enable_motor),  NULL, NULL);
@@ -418,7 +418,7 @@ void rtc_user_main(void)
 	// at the beginning of the a period, defined by the forcing_freq_hz variable...
 	
 	// Both filtered and raw PID error is calculated. This is useful for comparison.
-	pid_error_raw = target_angular_velocity - encoder_speed;
+	pid_error_raw = target_speed - encoder_speed;
 	pid_error_filtered = biquad_filter(pid_error_raw, &input_filter, pid_error_filter_state);
 	
 	// Decide whether to use filtered or raw error value.
@@ -587,21 +587,29 @@ void update_forcing_freq(void *new_value, void *trigger_data)
 /* Trigger function.
    The target speed in rpm can be set by the user from Matlab.
    The target speed in rad/s is recomputed when this happens. */
-void update_target_angular_velocity(void *new_value, void *trigger_data)
+void update_target_speed(void *new_value, void *trigger_data)
 {
 	/* Extract the data from the pointers */
 	float new_rpm = *((float *)new_value);
 	
-	// Full stop requested, stop the motor and reset the controller.
-	if (fabs(new_rpm) == 0) {
+	// The motor is stopped by setting the target to *EXACTLY* zero.
+	// Since this is a well-defined specific value, we should not have any
+	// floating point issues? As long as we *SET* it to *EXACTLY* zero lateral
+	// constant rather than compute the value which "equals" zero. That value
+	// may be *VERY* close, but it won't be exactly zero, so this won't work.
+	// Always set the rpm value to exactly zero.
+	if (fabs(new_rpm) == 0.0f) {
 		shutdown_motor();
+	// If new value is not zero, check whether the motor needs starting up,
+	// in which case PID error terms and speed history need resetting. 
+	} else if (rpm == 0.0f) {
 		reset_pid_error_terms(NULL, NULL);
 		reset_speed_history();
 	}
 	
-	// In any case, store both rpm and rad/s values.
+	// Keep both rpm and rad/s values... FIXME why exactly?
 	rpm = new_rpm;
-	target_angular_velocity = rpm2rad(new_rpm);
+	target_speed = rpm2rad(new_rpm);
 }
 
 /* **********************************************************************
