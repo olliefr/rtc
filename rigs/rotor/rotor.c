@@ -3,6 +3,8 @@
 ** Copyright (c) 2014, David A.W. Barton
 ** (david.barton@bristol.ac.uk) All rights reserved.
 **
+** "A FOOLISH CONSISTENCY IS THE HOBGOBLIN OF LITTLE MINDS..." ~ R.W. Emerson
+**
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions are
 ** met:
@@ -187,7 +189,7 @@ static uint32_t speed_safety_limit_reached_flag;
 
 // Buffer to collect last N speed readings for averaging. Used for 
 // enforcing the speed safety limit. The buffer wraps over at the end, using
-// the index variable.
+// the index variable. The speed values are in rpm.
 static float speed_history[SPEED_HISTORY_SIZE];
  
 // Speed history buffer index
@@ -649,18 +651,18 @@ void reset_error_and_status_flags(void *new_value, void *trigger_data)
 
 void reset_pid_error_terms(void *new_value, void *trigger_data)
 {
-	pid_error_before = 0.0f;
-	pid_error_raw    = 0.0f;
-	pid_error_filtered = 0.0f;
-	pid_error_integral = 0.0f;
+	pid_error_before     = 0.0f;
+	pid_error_raw        = 0.0f;
+	pid_error_filtered   = 0.0f;
+	pid_error_integral   = 0.0f;
 	pid_error_derivative = 0.0f;
 }
 
 void reset_speed_history(void)
 {
-	speed_history_full = 0; // Flag to indicate that there is enough points to compute the mean value
-	speed_history_idx = 0;  // Index to where the next data point is saved
 	mean_speed = 0.0f;      // No history means no mean speed
+	speed_history_full = 0;
+	speed_history_idx  = 0;
 }
 
 // Return the sum of an array of floating-point values.
@@ -759,6 +761,7 @@ void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_spee
 	encoder_transfer_f_intercept = intercept;
 }
 
+// TODO this got to go to general RTC code, it's useful!
 void bbb_reset(void *new_value, void *trigger_data)
 {
 	HWREG(SOC_PRM_DEVICE_REGS) |= 0x00000001;
