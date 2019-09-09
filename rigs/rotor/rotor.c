@@ -138,8 +138,8 @@ static float pid_error_before;
 static float pid_error_derivative;
 static float pid_error_integral;
 
-// Lasers: displacement in mm
-static float lasers_output_mm[NUMBER_OF_LASERS];
+// Lasers: distance to the object in mm
+static float lasers_distance_mm[NUMBER_OF_LASERS];
 
 // Lasers: voltage limits. For Omron ZX1-300 lasers with 250 Ohm resistor in 
 // the signal conditioner, the signal varies from 1 to 5 volts. 
@@ -261,9 +261,6 @@ float rpm2rad(float rpm);
 /* ************************************************************************ */
 void rtc_user_init(void)
 {
-	char laser_name_volt[] = "laser#_output_volts";
-	char laser_name_displacement[] = "laser#_output_mm";
-
 	// TODO better name, can this be a function in rtc() object instead?
 	rtc_data_add_par("bbb_reset", &time, RTC_TYPE_UINT32, sizeof(time), bbb_reset, NULL);
 
@@ -349,13 +346,16 @@ void rtc_user_init(void)
 	//   * calculated position in mm [RO]
 	//   * linear transfer function (volts to mm) gradient and intercept
 	for (uint32_t i = 0; i < NUMBER_OF_LASERS; i++) {
+		char laser_name_volt[] = "laser#_output_volts";
+		char laser_name_distance[] = "laser#_distance_mm";
+		
 		uint8_t laser_no_char = '1' + (uint8_t) i;
 
-		laser_name_volt[5]          = laser_no_char;
-		laser_name_displacement[5]  = laser_no_char;
+		laser_name_volt[5]     = laser_no_char;
+		laser_name_distance[5] = laser_no_char;
 
 		rtc_data_add_par(laser_name_volt, &in_volt[i+1], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
-		rtc_data_add_par(laser_name_displacement, &lasers_output_mm[i], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
+		rtc_data_add_par(laser_name_distance, &lasers_distance_mm[i], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 	}
 	rtc_data_add_par("lasers_transfer_f_gradient", &lasers_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_gradient), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("lasers_transfer_f_intercept", &lasers_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_intercept), rtc_data_trigger_read_only, NULL);
@@ -705,9 +705,9 @@ void lasers_compute_distance_from_voltage(void)
 		// would be even greater current; the far field is very weak signal, so going further
 		// means even weaker signal.
 		if (voltage_read < lasers_far_field_limit_volt || voltage_read > lasers_near_field_limit_volt)
-			lasers_output_mm[i] = NAN;
+			lasers_distance_mm[i] = NAN;
 		else
-			lasers_output_mm[i] = lasers_transfer_f_gradient * voltage_read + lasers_transfer_f_intercept;
+			lasers_distance_mm[i] = lasers_transfer_f_gradient * voltage_read + lasers_transfer_f_intercept;
 	}
 }
 
