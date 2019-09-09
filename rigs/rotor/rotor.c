@@ -264,6 +264,7 @@ void rtc_user_init(void)
 	char laser_name_volt[] = "laser#_output_volts";
 	char laser_name_displacement[] = "laser#_output_mm";
 
+	// TODO better name, can this be a function in rtc() object instead?
 	rtc_data_add_par("bbb_reset", &time, RTC_TYPE_UINT32, sizeof(time), bbb_reset, NULL);
 
 	// Tracking of time, linear and periodic counters are provided
