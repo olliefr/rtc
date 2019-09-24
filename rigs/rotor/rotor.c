@@ -363,6 +363,7 @@ void rtc_user_init(void)
 		laser_name_volt[5]     = laser_no_char;
 		laser_name_distance[5] = laser_no_char;
 
+		// These two families of parameters index into their corresponding arrays, therefore sizeof is of a single element:
 		rtc_data_add_par(laser_name_volt, &in_volt[i+1], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 		rtc_data_add_par(laser_name_distance, &lasers_distance_mm[i], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 	}
@@ -604,7 +605,7 @@ void update_target_speed(void *new_value, void *trigger_data)
 	// in which case PID error terms and speed history need resetting. 
 	} else if (rpm == 0.0f) {
 		reset_pid_error_terms(NULL, NULL);
-		reset_speed_history();
+		reset_speed_history(); // TODO let speed history run forever, no problem with that
 	}
 	
 	// Keep both rpm and rad/s values... FIXME why exactly?
