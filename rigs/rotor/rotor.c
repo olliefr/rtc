@@ -143,6 +143,11 @@ static float pid_error_integral;
 // Lasers: distance to the object in mm
 static float lasers_distance_mm[NUMBER_OF_LASERS];
 
+// Lasers: distance to the reflector at rest. Every experiment should make note of this!
+//         the default value is NAN for easy spotting of cases when the Matlab script
+//         has not taken note of the distance at rest.
+static float lasers_distance_at_rest[NUMBER_OF_LASERS] = {NAN};
+
 // Lasers: voltage limits. For Omron ZX1-300 lasers with 250 Ohm resistor in 
 // the signal conditioner, the signal varies from 1 to 5 volts. 
 static float lasers_near_field_limit_volt = 5.0f;
@@ -367,6 +372,7 @@ void rtc_user_init(void)
 		rtc_data_add_par(laser_name_volt, &in_volt[i+1], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 		rtc_data_add_par(laser_name_distance, &lasers_distance_mm[i], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 	}
+	rtc_data_add_par("lasers_distance_at_rest", &lasers_distance_at_rest, RTC_TYPE_FLOAT, sizeof(lasers_distance_at_rest), NULL, NULL);
 	rtc_data_add_par("lasers_transfer_f_gradient", &lasers_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_gradient), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("lasers_transfer_f_intercept", &lasers_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_intercept), rtc_data_trigger_read_only, NULL);
 
