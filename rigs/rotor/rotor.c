@@ -111,8 +111,12 @@ static float rpm;
 // by the update trigger of rpm variable.
 static float target_speed;
  
-// Motor control: two channels, "digital" to enable and set direction and analog to set value
-static uint32_t output_channel_enable_motor    = 1; /* Output U1 (unipolar) */
+// Motor control: 
+//   * rotation sense and enable signal on one output channel; and 
+//   * set (current) value on another output channel.
+//
+// This duplicates the settings in the ESCON controller.
+static uint32_t output_channel_enable_motor    = 2; /* Output B1 (bipolar) */
 static uint32_t output_channel_motor_set_level = 0; /* Output B0 (bipolar) */
 
 // Motor: set voltage level. This must be within [motor_min_voltage, motor_max_voltage]
@@ -137,6 +141,9 @@ static float pid_error_filtered;
 static float pid_error_before;
 static float pid_error_derivative;
 static float pid_error_integral;
+
+// Motor PID controller numeric integrity flag
+static uint32_t pid_numeric_error_flag;
 
 // Lasers: distance to the object in mm
 static float lasers_distance_mm[NUMBER_OF_LASERS];
@@ -316,6 +323,9 @@ void rtc_user_init(void)
 	rtc_data_add_par("pid_error_integral", &pid_error_integral, RTC_TYPE_FLOAT, sizeof(pid_error_integral), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("pid_error_derivative", &pid_error_derivative, RTC_TYPE_FLOAT, sizeof(pid_error_derivative), rtc_data_trigger_read_only, NULL);
 
+	// PID numeric error flag. If set, there was a numerical error PID calculations. [RW]
+	rtc_data_add_par("pid_numeric_error_flag",  &pid_numeric_error_flag,  RTC_TYPE_UINT32, sizeof(pid_numeric_error_flag), NULL, NULL);
+	
 	// OPTIONLA: Speed safety limit in [rpm], and status flag (sticky). Both [RW].
 	// The limit is a positive number, but the speed safety feature would not look at the sense of rotation, only at the actual speed.
 	rtc_data_add_par("enable_speed_safety_limit",  &enable_speed_safety_limit,  RTC_TYPE_UINT32, sizeof(enable_speed_safety_limit), NULL, NULL);
@@ -393,9 +403,11 @@ void rtc_user_main(void)
 	lasers_compute_distance_from_voltage();
 	encoder_compute_speed_from_voltage();
 	
-	// If speed safety lockout has been activated, don't do anything, sit and 
-	// wait until the user resets the error flag.
-	if (speed_safety_limit_reached_flag)
+	// In case a critical error has happened, don't do anything, sit and wait until 
+	// the operator resets the corresponding flag. Critical conditions:
+	//   * speed safety limit was reached
+	//   * motor set level value by PID controller was not a valid fp number
+	if (speed_safety_limit_reached_flag || pid_numeric_error_flag)
 		goto finalise;
 	
 	// If speed limit is enabled, compute the mean speed, and shut down the rig
@@ -456,22 +468,56 @@ void rtc_user_main(void)
 	/* ********************************************************************** */
 	/*  Real-time control */
 	/* ********************************************************************** */
-	// The control is run at forcing_freq_hz rate. The time_mod_2pi is set up in 
-	// the way that a new period begins exactly at forcing_freq_hz rate.
+	
+	// * The control is run at forcing_freq_hz rate. The time_mod_2pi is set up in 
+	//   the way that a new period begins exactly at forcing_freq_hz rate.
+	//
+	// * This controller requires that ESCON is set to (?). Analogue input ? signal sets 
+	//   the direction of rotation (using sign) and enables the motor. Analogue input ? 
+	//   signal sets the magnitude of the current. The limits on the magnitude are set
+	//   in the ESCON software and duplicated in this firmware in motor_{min|max}_voltage
+	//   variables.
+	//
+	// * The PID controller above computes the voltage value not knowing that the sign 
+	//   is handled by the motor_enable signal, so care must be taken to ignore the sign
+	//   where it is not needed:
+	//
 	if (period_start) {		
 		if (rpm != 0.0f) {
-			// Clip motor voltage levels, if necessary. Record the fact of clipping the output.
-			if (motor_voltage_level < motor_min_voltage) {
-				motor_voltage_level = motor_min_voltage;
-				motor_min_voltage_flag = 1;
-			} else if (motor_voltage_level > motor_max_voltage) {
-				motor_voltage_level = motor_max_voltage;
-				motor_max_voltage_flag = 1;
-			}
-	
-			// Motor control
-			rtc_set_output(output_channel_enable_motor, MAXON_ON);
-			rtc_set_output(output_channel_motor_set_level, motor_voltage_level);
+			
+			// Shut down the system right now if the PID output value does not make sense!
+			if (isfinite(motor_voltage_level) == 0) {
+				pid_numeric_error_flag = 1;
+				shutdown_motor();
+				goto finalise;
+			
+			// The PID output value is numerically valid, carry on the actuation. Rather 
+			// than fiddling with the value produced by the PID controller, split it into
+			// the sense of rotation and the magnitude (set level) and send both signals
+			// to the right outputs.
+			} else {
+				// The sense of rotation is given by the motor_enable signal sign:
+				//   * CW is (?)
+				//   * CCW is (?)
+				float motor_enable = copysignf(MAXON_ON, motor_voltage_level);
+				
+				// The voltage level is a magnitude, hence always non-negative
+				float motor_set_level = fabs(motor_voltage_level);
+				
+				// Clip motor voltage levels, if necessary. Record the fact of clipping the output.
+				// Rotation direction is set by the sign of voltage level, so ignore the sign.
+				if (motor_set_level < motor_min_voltage) {
+					motor_set_level = motor_min_voltage;
+					motor_min_voltage_flag = 1;
+				} else if (motor_set_level > motor_max_voltage) {
+					motor_set_level = motor_max_voltage;
+					motor_max_voltage_flag = 1;
+				}
+				
+				// Actuate!
+				rtc_set_output(output_channel_enable_motor, motor_enable);
+				rtc_set_output(output_channel_motor_set_level, motor_set_level);
+			}	
 		}	
 	}
 	
