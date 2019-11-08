@@ -110,8 +110,6 @@ static float rpm;
 // CONTROL TARGET: angular velocity to maintain in rad/s. This value is computed
 // by the update trigger of rpm variable.
 static float target_speed;
-
-// TODO incorporate motor_set_value limits: 0.000 volt -> 0.000 amps, 4.250 volt -> 5 amps
  
 // Motor control: two channels, "digital" to enable and set direction and analog to set value
 static uint32_t output_channel_enable_motor    = 1; /* Output U1 (unipolar) */
@@ -124,7 +122,7 @@ static float motor_voltage_level;
 static float motor_min_voltage;
 static float motor_max_voltage;
 
-// Motor: min and max voltage attempted flag
+// Motor: flag for voltage clipped at min or max level
 static uint32_t motor_min_voltage_flag;
 static uint32_t motor_max_voltage_flag;
 
