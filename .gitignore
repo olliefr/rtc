@@ -38,3 +38,6 @@ binary/*
 
 # Starterware
 starterware
+
+# Matlab temporary files for rig interfaces
+rigs/**/*.asv
