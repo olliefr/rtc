@@ -260,7 +260,7 @@ static uint32_t request_reset_pid_error_terms;
 /* ************************************************************************ */
 
 // Reset the whole system
-void bbb_reset(void *new_value, void *trigger_data);
+void bbb_reboot(void *new_value, void *trigger_data);
 
 // Warning and error flag functions
 static uint32_t get_status_flags(uint32_t idx);
@@ -304,7 +304,7 @@ float rpm2rad(float rpm);
 void rtc_user_init(void)
 {
 	// TODO better name, can this be a function in rtc() object instead?
-	rtc_data_add_par("bbb_reset", &time, RTC_TYPE_UINT32, sizeof(time), bbb_reset, NULL);
+	rtc_data_add_par("bbb_reboot", &time, RTC_TYPE_UINT32, sizeof(time), bbb_reboot, NULL);
 
 	// Tracking of time, linear and periodic counters are provided
 	rtc_data_add_par("time",  &time, RTC_TYPE_UINT32, sizeof(time), rtc_data_trigger_read_only, NULL);
@@ -876,7 +876,7 @@ void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_spee
 }
 
 // TODO this got to go to general RTC code, it's useful!
-void bbb_reset(void *new_value, void *trigger_data)
+void bbb_reboot(void *new_value, void *trigger_data)
 {
 	HWREG(SOC_PRM_DEVICE_REGS) |= 0x00000001;
 }
