@@ -116,8 +116,9 @@ static float target_speed;
 //   * set (current) value on another output channel.
 //
 // This duplicates the settings in the ESCON controller.
-static uint32_t output_channel_enable_motor    = 2; /* Output B1 (bipolar) */
+static uint32_t output_channel_enable_motor    = 1; /* Output U1 (unipolar) */
 static uint32_t output_channel_motor_set_level = 0; /* Output B0 (bipolar) */
+static uint32_t output_channel_motor_direction = 3; /* Output U3 (unipolar) */
 
 // Motor: set voltage level. This must be within [motor_min_voltage, motor_max_voltage]
 static float motor_voltage_level;
@@ -499,7 +500,6 @@ void rtc_user_main(void)
 				// The sense of rotation is given by the motor_enable signal sign:
 				//   * CW is (?)
 				//   * CCW is (?)
-				float motor_enable = copysignf(MAXON_ON, motor_voltage_level);
 				
 				// The voltage level is a magnitude, hence always non-negative
 				float motor_set_level = fabs(motor_voltage_level);
@@ -515,7 +515,9 @@ void rtc_user_main(void)
 				}
 				
 				// Actuate!
-				rtc_set_output(output_channel_enable_motor, motor_enable);
+				rtc_set_output(output_channel_motor_direction, 
+					motor_voltage_level > 0 ? MAXON_OFF : MAXON_ON);
+				rtc_set_output(output_channel_enable_motor, MAXON_ON);
 				rtc_set_output(output_channel_motor_set_level, motor_set_level);
 			}	
 		}	
