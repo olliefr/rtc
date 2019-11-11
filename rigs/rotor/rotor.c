@@ -155,10 +155,6 @@ static float motor_voltage_level;
 static float motor_min_voltage;
 static float motor_max_voltage;
 
-// Motor: flag for voltage clipped at min or max level
-//static uint32_t motor_min_voltage_flag;
-//static uint32_t motor_max_voltage_flag;
-
 // Motor PID controller coefficients
 static float K_p;
 static float K_i;
@@ -170,9 +166,6 @@ static float pid_error_filtered;
 static float pid_error_before;
 static float pid_error_derivative;
 static float pid_error_integral;
-
-// Motor PID controller numeric integrity flag
-//static uint32_t pid_numeric_error_flag;
 
 // Lasers: distance to the object in mm
 static float lasers_distance_mm[NUMBER_OF_LASERS];
@@ -340,10 +333,6 @@ void rtc_user_init(void)
 	rtc_data_add_par("motor_min_voltage", &motor_min_voltage, RTC_TYPE_FLOAT, sizeof(motor_min_voltage), NULL, NULL);
 	rtc_data_add_par("motor_max_voltage", &motor_max_voltage, RTC_TYPE_FLOAT, sizeof(motor_max_voltage), NULL, NULL);
 
-	// Motor: min/max voltage status flag (sticky)
-	//rtc_data_add_par("motor_min_voltage_flag",  &motor_min_voltage_flag,  RTC_TYPE_UINT32, sizeof(motor_min_voltage_flag), update_status_flag, &RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MIN);
-	//rtc_data_add_par("motor_max_voltage_flag",  &motor_max_voltage_flag,  RTC_TYPE_UINT32, sizeof(motor_max_voltage_flag), update_status_flag, &RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MAX);
-
 	// Motor PID controller coefficients. All [RW]
 	rtc_data_add_par("K_p", &K_p, RTC_TYPE_FLOAT, sizeof(K_p), NULL, NULL);
 	rtc_data_add_par("K_i", &K_i, RTC_TYPE_FLOAT, sizeof(K_i), NULL, NULL);
@@ -358,15 +347,11 @@ void rtc_user_init(void)
 	rtc_data_add_par("pid_error_filtered", &pid_error_filtered, RTC_TYPE_FLOAT, sizeof(pid_error_filtered), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("pid_error_integral", &pid_error_integral, RTC_TYPE_FLOAT, sizeof(pid_error_integral), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("pid_error_derivative", &pid_error_derivative, RTC_TYPE_FLOAT, sizeof(pid_error_derivative), rtc_data_trigger_read_only, NULL);
-
-	// PID numeric error flag. If set, there was a numerical error PID calculations. [RW]
-	//rtc_data_add_par("pid_numeric_error_flag",  &pid_numeric_error_flag,  RTC_TYPE_UINT32, sizeof(pid_numeric_error_flag), NULL, NULL);
 	
 	// OPTIONLA: Speed safety limit in [rpm], and status flag (sticky). Both [RW].
 	// The limit is a positive number, but the speed safety feature would not look at the sense of rotation, only at the actual speed.
 	rtc_data_add_par("enable_speed_safety_limit",  &enable_speed_safety_limit,  RTC_TYPE_UINT32, sizeof(enable_speed_safety_limit), NULL, NULL);
 	rtc_data_add_par("speed_safety_limit_rpm", &speed_safety_limit_rpm, RTC_TYPE_FLOAT, sizeof(speed_safety_limit_rpm), NULL, NULL);
-	//rtc_data_add_par("speed_safety_limit_reached_flag",  &speed_safety_limit_reached_flag,  RTC_TYPE_UINT32, sizeof(speed_safety_limit_reached_flag), NULL, NULL);
 	rtc_data_add_par("speed_history", &speed_history, RTC_TYPE_FLOAT, sizeof(speed_history), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("mean_speed_rpm", &mean_speed_rpm, RTC_TYPE_FLOAT, sizeof(mean_speed_rpm), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("max_speed_rpm", &max_speed_rpm, RTC_TYPE_FLOAT, sizeof(max_speed_rpm), rtc_data_trigger_read_only, NULL);
