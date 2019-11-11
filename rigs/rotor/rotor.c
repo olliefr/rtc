@@ -268,9 +268,6 @@ void reset_pid_error_terms(void *new_value, void *trigger_data); // Trigger
 
 void reset_speed_history(void);
 
-// Encoder transfer function converts input voltage to speed in rpm. It is linear, so it requires gradient and intercept values to operate.
-void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_speed_rpm, float encoder_high_voltage, float encoder_high_speed_rpm);
-
 float biquad_filter(float x, const struct biquad_filter_t *filter, float state[]);
 void update_filter(struct biquad_filter_t *filter, float freq);
 
