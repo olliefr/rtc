@@ -186,7 +186,7 @@ static float lasers_far_field_limit_volt  = 1.0f;
 //   * the resistor value in signal conditioner is 250 [Ohm]
 //
 // The calculations are in the `rig/Computing Lasers Transfer Function.pdf` file.
-static float lasers_transfer_f_gradient = 75.0f;
+static float lasers_transfer_f_gradient  =   75.0f;
 static float lasers_transfer_f_intercept = -225.0f;
 
 // Rotary Encoder: voltage as read, and its interpretation as angular position,
@@ -201,9 +201,9 @@ static float encoder_speed;     // in rad/s
 // Rotary Encoder: Maxon Motor Controller Escon 50/5 built-in encoder outputs
 // speed (12-bit resolution) as voltage. The linear range is set in ESCON
 // studio software and the values should match those below for correct conversion.
-static float encoder_low_voltage = 0.250;
-static float encoder_low_speed_rpm = 0;
-static float encoder_high_voltage = 4;
+static float encoder_low_voltage  = 0.250;
+static float encoder_high_voltage = 4.000;
+static float encoder_low_speed_rpm  =    0;
 static float encoder_high_speed_rpm = 3000;
 
 // Rotary Encoder: transfer function (voltage to SPEED) gradient and intercept
