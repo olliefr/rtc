@@ -198,14 +198,6 @@ static float encoder_angular_position_prev;
 static float encoder_speed_rpm;
 static float encoder_speed;     // in rad/s
 
-// Rotary Encoder: Maxon Motor Controller Escon 50/5 built-in encoder outputs
-// speed (12-bit resolution) as voltage. The linear range is set in ESCON
-// studio software and the values should match those below for correct conversion.
-static float encoder_low_voltage  = 0.250;
-static float encoder_high_voltage = 4.000;
-static float encoder_low_speed_rpm  =    0;
-static float encoder_high_speed_rpm = 3000;
-
 // Rotary Encoder: transfer function (voltage to SPEED) gradient and intercept
 static float encoder_transfer_f_gradient;
 static float encoder_transfer_f_intercept;
@@ -273,12 +265,6 @@ void update_target_speed(void *new_value, void *trigger_data);   // Trigger
 void update_input_filter(void *new_value, void *trigger_data);   // Trigger
 void reset_status_flags(void *new_value, void *trigger_data);    // Trigger
 void reset_pid_error_terms(void *new_value, void *trigger_data); // Trigger
-
-// Triggers for the rotary encoder (voltage to SPEED conversion related variables)
-void update_encoder_low_voltage(void *new_value, void *trigger_data);     // Trigger
-void update_encoder_low_speed_rpm(void *new_value, void *trigger_data);   // Trigger
-void update_encoder_high_voltage(void *new_value, void *trigger_data);    // Trigger
-void update_encoder_high_speed_rpm(void *new_value, void *trigger_data);  // Trigger
 
 void reset_speed_history(void);
 
@@ -366,19 +352,9 @@ void rtc_user_init(void)
 	rtc_data_add_par("encoder_speed_rpm", &encoder_speed_rpm, RTC_TYPE_FLOAT, sizeof(encoder_speed_rpm), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("encoder_speed", &encoder_speed, RTC_TYPE_FLOAT, sizeof(encoder_speed), rtc_data_trigger_read_only, NULL);
 	
-	// Rotary Encoder: the Maxon Motor Controller Escon 50/5 outputs a speed reading (as voltage), and the following values
-	// are required to convert that to RPM value.
-	rtc_data_add_par("encoder_low_voltage", &encoder_low_voltage, RTC_TYPE_FLOAT, sizeof(encoder_low_voltage), update_encoder_low_voltage, NULL);
-	rtc_data_add_par("encoder_low_speed_rpm", &encoder_low_speed_rpm, RTC_TYPE_FLOAT, sizeof(encoder_low_speed_rpm), update_encoder_low_speed_rpm, NULL);
-	rtc_data_add_par("encoder_high_voltage", &encoder_high_voltage, RTC_TYPE_FLOAT, sizeof(encoder_high_voltage), update_encoder_high_voltage, NULL);
-	rtc_data_add_par("encoder_high_speed_rpm", &encoder_high_speed_rpm, RTC_TYPE_FLOAT, sizeof(encoder_high_speed_rpm), update_encoder_high_speed_rpm, NULL);
-
 	// Rotary Encoder: the linear transfer function (voltage to SPEED). These are computed by the triggers for the above four variables.
 	rtc_data_add_par("encoder_transfer_f_gradient", &encoder_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_gradient), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("encoder_transfer_f_intercept", &encoder_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_intercept), rtc_data_trigger_read_only, NULL);
-
-	// Rotary Encoder: calculate the transfer function for the voltage to SPEED encoder
-	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
 
 	// Actions. Set to nonzero value to activate and the triggers will do the rest.
 	rtc_data_add_par("reset_status_flags", &request_reset_status_flags, RTC_TYPE_UINT32, sizeof(request_reset_status_flags), reset_status_flags, NULL);
@@ -588,58 +564,6 @@ float inv_tan_pi(float x)
 	return (cosine_f[0]/sine_f[0]);
 }
 
-// Trigger function: on update, the transfer function for the encoder must be recomputed.
-void update_encoder_low_voltage(void *new_value, void *trigger_data)
-{
-	/* Extract the data from the pointers */
-	float new_encoder_low_voltage = *((float *)new_value);
-	
-	// TODO verify?
-	encoder_low_voltage = new_encoder_low_voltage;
-	
-	/* Update the transfer function */
-	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
-}
-
-// Trigger function: on update, the transfer function for the encoder must be recomputed.
-void update_encoder_low_speed_rpm(void *new_value, void *trigger_data)
-{
-	/* Extract the data from the pointers */
-	float new_encoder_low_speed_rpm = *((float *)new_value);
-	
-	// TODO verify?
-	encoder_low_speed_rpm = new_encoder_low_speed_rpm;
-	
-	/* Update the transfer function */
-	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
-}
-
-// Trigger function: on update, the transfer function for the encoder must be recomputed.
-void update_encoder_high_voltage(void *new_value, void *trigger_data)
-{
-	/* Extract the data from the pointers */
-	float new_encoder_high_voltage = *((float *)new_value);
-	
-	// TODO verify?
-	encoder_high_voltage = new_encoder_high_voltage;
-	
-	/* Update the transfer function */
-	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
-}
-
-// Trigger function: on update, the transfer function for the encoder must be recomputed.
-void update_encoder_high_speed_rpm(void *new_value, void *trigger_data)
-{
-	/* Extract the data from the pointers */
-	float new_encoder_high_speed_rpm = *((float *)new_value);
-	
-	// TODO verify?
-	encoder_high_speed_rpm = new_encoder_high_speed_rpm;
-	
-	/* Update the transfer function */
-	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
-}
-
 /* Trigger function.
    This allows to set how fast the controller runs. The user specifies the value
 	 in times per second (Hz), but since internally the programme runs on 
@@ -840,39 +764,6 @@ void encoder_compute_speed_from_position(void)
 {
 	encoder_speed = (encoder_angular_position_prev - encoder_angular_position) / time_delta;
 	encoder_speed_rpm = rad2rpm(encoder_speed);
-}
-
-// Assuming the correspondence of voltage to speed is linear, one must have two data points
-// to figure out the linear transfer function. The following function computes the gradient
-// and the intercept of the transfer function given two voltage-to-speed conversiions. They
-// would be the same values as those set in the ESCON Studio.
-// 
-// Test data, computed manually (see Notes): 
-//   * encoder_low_voltage = 0.250 volts
-//   * encoder_low_speed_rpm = 0 rpm
-//   * encoder_high_voltage = 4 volts (this is max ESCON 50/5 output can do)
-//   * encoder_high_speed_rpm = 3000 rpm (this rig shouldn't even need this much)
-// 
-//  gradient = 800, intercept = -200
-//
-void update_encoder_transfer_f(float encoder_low_voltage, float encoder_low_speed_rpm, float encoder_high_voltage, float encoder_high_speed_rpm)
-{
-	float x1 = encoder_low_voltage;
-	float x2 = encoder_high_voltage;
-	
-	float y1 = encoder_low_speed_rpm;
-	float y2 = encoder_high_speed_rpm;
-	
-	float gradient, intercept;
-	
-	// FIXME much better to look for a small value, which given it's a single precision FP number, would not divide delta x
-	if ((y1 - y2) == 0) return;
-	
-	gradient =  (y1 - y2) / (x1 - x2);
-	intercept = 0.5f * ((y1+y2) - gradient * (x1+x2));
-	
-	encoder_transfer_f_gradient = gradient;
-	encoder_transfer_f_intercept = intercept;
 }
 
 // TODO this got to go to general RTC code, it's useful!
