@@ -6,10 +6,10 @@ classdef rotor_interface < rtc_interface
     % David A.W. Barton (david.barton@bristol.ac.uk) 2015
     
     properties
-        RIG_STATUS_OK                        = 0;
-        RIG_STATUS_UNKNOWN_ERROR             = 2^0;
-        RIG_STATUS_SETUP_NOT_COMPLETED       = 2^1;
-        RIG_STATUS_PID_NUMERIC_ERROR         = 2^2;
+        RIG_STATUS_OK                         = 0;
+        RIG_STATUS_UNKNOWN_ERROR              = 2^0;
+        RIG_STATUS_SETUP_NOT_COMPLETED        = 2^1;
+        RIG_STATUS_PID_NUMERIC_ERROR          = 2^2;
         RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED = 2^3;
         RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MIN  = 2^4;
         RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MAX  = 2^5;
