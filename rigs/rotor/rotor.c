@@ -73,7 +73,8 @@
 // to be "at rest".
 #define RPM_AT_REST_CUTOFF 10
 
-// Use a single 32-bit unsigned integer for flags. This is faster than using a whole integer
+// Rig configuration and runtime errors are reported by setting corresponding bits in
+// a 32-bit unsigned integer named status_flags. This is faster than using a whole integer
 // for *each* flag and also allows to save them all easily. But this does require a certain
 // support infrastructure to use from Matlab easily.
 //
@@ -82,10 +83,11 @@
 //
 #define RIG_STATUS_OK                         0u
 #define RIG_STATUS_UNKNOWN_ERROR              (0x1u << 0)
-#define RIG_STATUS_PID_NUMERIC_ERROR          (0x1u << 1)
-#define RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED (0x1u << 2)
-#define RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MIN  (0x1u << 3)
-#define RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MAX  (0x1u << 4)
+#define RIG_STATUS_SETUP_NOT_COMPLETED        (0x1u << 1)
+#define RIG_STATUS_PID_NUMERIC_ERROR          (0x1u << 2)
+#define RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED (0x1u << 3)
+#define RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MIN  (0x1u << 4)
+#define RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MAX  (0x1u << 5)
 
 /* ********************************************************************** */
 /* * Types ************************************************************** */
@@ -121,7 +123,12 @@ static float forcing_freq;
 // The error and warning flags. Each bits of this variable corresponds to a single flag. 
 // The list of available flags is above in definitions RIG_FLAG_... Zero bit value means
 // the flag has not been set.
-static uint32_t status_flags;
+//
+// Some variables such as motor voltage limits, PID coefficients, and possibly laser/encoder
+// transfer function coefficients may not be set in firmware and require configuration from
+// Matlab before the rig is run. Thus, on booting the controller, wait for the operator to
+// explicitly declare that the rig has been set up and ready to go.
+static uint32_t status_flags = RIG_STATUS_SETUP_NOT_COMPLETED;
 
 // CONTROL TARGET: angular velocity to maintain, in rpm
 static float rpm;
