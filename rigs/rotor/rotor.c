@@ -80,11 +80,12 @@
 // !!! Never change the existing values as the data might have been saved using it.
 //     Use the next available value for the new flags.
 //
-#define RIG_FLAG_UNKNOWN_ERROR              (0x1u << 0)
-#define RIG_FLAG_PID_NUMERIC_ERROR          (0x1u << 1)
-#define RIG_FLAG_SPEED_SAFETY_LIMIT_REACHED (0x1u << 2)
-#define RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MIN  (0x1u << 3)
-#define RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MAX  (0x1u << 4)
+#define RIG_STATUS_OK                         0u
+#define RIG_STATUS_UNKNOWN_ERROR              (0x1u << 0)
+#define RIG_STATUS_PID_NUMERIC_ERROR          (0x1u << 1)
+#define RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED (0x1u << 2)
+#define RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MIN  (0x1u << 3)
+#define RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MAX  (0x1u << 4)
 
 /* ********************************************************************** */
 /* * Types ************************************************************** */
@@ -117,6 +118,11 @@ static float forcing_freq_hz = 10.0f;
 // Forcing frequency (angular). This is computed by the _hz setter.
 static float forcing_freq;
 
+// The error and warning flags. Each bits of this variable corresponds to a single flag. 
+// The list of available flags is above in definitions RIG_FLAG_... Zero bit value means
+// the flag has not been set.
+static uint32_t status_flags;
+
 // CONTROL TARGET: angular velocity to maintain, in rpm
 static float rpm;
 
@@ -124,6 +130,8 @@ static float rpm;
 // by the update trigger of rpm variable.
 static float target_speed;
  
+// TODO digital signals to the motor become digital connections to free up analogue output:
+
 // Motor control: 
 //   * rotation sense and enable signal on one output channel; and 
 //   * set (current) value on another output channel.
@@ -141,8 +149,8 @@ static float motor_min_voltage;
 static float motor_max_voltage;
 
 // Motor: flag for voltage clipped at min or max level
-static uint32_t motor_min_voltage_flag;
-static uint32_t motor_max_voltage_flag;
+//static uint32_t motor_min_voltage_flag;
+//static uint32_t motor_max_voltage_flag;
 
 // Motor PID controller coefficients
 static float K_p;
@@ -157,7 +165,7 @@ static float pid_error_derivative;
 static float pid_error_integral;
 
 // Motor PID controller numeric integrity flag
-static uint32_t pid_numeric_error_flag;
+//static uint32_t pid_numeric_error_flag;
 
 // Lasers: distance to the object in mm
 static float lasers_distance_mm[NUMBER_OF_LASERS];
@@ -209,7 +217,7 @@ static uint32_t enable_speed_safety_limit = 1;
 static float speed_safety_limit_rpm = 600;
  
 // Indicates that the safety limit has been reached
-static uint32_t speed_safety_limit_reached_flag;
+//static uint32_t speed_safety_limit_reached_flag;
 
 // Buffer to collect last N speed readings for averaging. Used for 
 // enforcing the speed safety limit. The buffer wraps over at the end, using
@@ -243,11 +251,9 @@ static float pid_error_filter_freq = 0.025f; // fraction of sampling frequency
 static struct biquad_filter_t input_filter;
 static float pid_error_filter_state[INPUT_FILTER_N_STATE];  // filtering encoder output
 
-
 // Requests. Set to nonzero to activate. The triggers on update will do the job.
-static uint32_t request_reset_error_and_status_flags;
+static uint32_t request_reset_status_flags;
 static uint32_t request_reset_pid_error_terms;
-
 
 /* ************************************************************************ */
 /* * Internal prototypes ************************************************** */
@@ -256,12 +262,17 @@ static uint32_t request_reset_pid_error_terms;
 // Reset the whole system
 void bbb_reset(void *new_value, void *trigger_data);
 
+// Warning and error flag functions
+static uint32_t get_status_flags(uint32_t idx);
+static void set_status_flags(uint32_t idx);
+static void clear_status_flags(uint32_t idx);
+
 // Triggers for various exported variables...
-void update_forcing_freq(void *new_value, void *trigger_data);            // Trigger
-void update_target_speed(void *new_value, void *trigger_data); // Trigger
-void update_input_filter(void *new_value, void *trigger_data);            // Trigger
-void reset_error_and_status_flags(void *new_value, void *trigger_data);   // Trigger
-void reset_pid_error_terms(void *new_value, void *trigger_data);          // Trigger
+void update_forcing_freq(void *new_value, void *trigger_data);   // Trigger
+void update_target_speed(void *new_value, void *trigger_data);   // Trigger
+void update_input_filter(void *new_value, void *trigger_data);   // Trigger
+void reset_status_flags(void *new_value, void *trigger_data);    // Trigger
+void reset_pid_error_terms(void *new_value, void *trigger_data); // Trigger
 
 // Triggers for the rotary encoder (voltage to SPEED conversion related variables)
 void update_encoder_low_voltage(void *new_value, void *trigger_data);     // Trigger
@@ -304,12 +315,16 @@ void rtc_user_init(void)
 	// Update forcing frequency (rad/s) value
 	update_forcing_freq((void *)&forcing_freq_hz, NULL);
 
+	// Rig flags available as a single variable
+	rtc_data_add_par("status_flags",  &status_flags, RTC_TYPE_UINT32, sizeof(status_flags), NULL, NULL);
+	
 	// Desired speed of rotation in RPM
 	rtc_data_add_par("rpm", &rpm, RTC_TYPE_FLOAT, sizeof(rpm), update_target_speed, NULL);
 
 	// Motor: enable and set value channel numbers
 	rtc_data_add_par("output_channel_enable_motor",  &output_channel_enable_motor, RTC_TYPE_UINT32, sizeof(output_channel_enable_motor),  NULL, NULL);
 	rtc_data_add_par("output_channel_motor_set_level", &output_channel_motor_set_level, RTC_TYPE_UINT32, sizeof(output_channel_motor_set_level), NULL, NULL);
+	rtc_data_add_par("output_channel_motor_direction", &output_channel_motor_direction, RTC_TYPE_UINT32, sizeof(output_channel_motor_direction), NULL, NULL);
 
 	// Motor: voltage input translates into current drawn according to the motor controller settings
 	rtc_data_add_par("motor_voltage_level", &motor_voltage_level, RTC_TYPE_FLOAT, sizeof(motor_voltage_level), NULL, NULL);
@@ -319,8 +334,8 @@ void rtc_user_init(void)
 	rtc_data_add_par("motor_max_voltage", &motor_max_voltage, RTC_TYPE_FLOAT, sizeof(motor_max_voltage), NULL, NULL);
 
 	// Motor: min/max voltage status flag (sticky)
-	rtc_data_add_par("motor_min_voltage_flag",  &motor_min_voltage_flag,  RTC_TYPE_UINT32, sizeof(motor_min_voltage_flag), NULL, NULL);
-	rtc_data_add_par("motor_max_voltage_flag",  &motor_max_voltage_flag,  RTC_TYPE_UINT32, sizeof(motor_max_voltage_flag), NULL, NULL);
+	//rtc_data_add_par("motor_min_voltage_flag",  &motor_min_voltage_flag,  RTC_TYPE_UINT32, sizeof(motor_min_voltage_flag), update_status_flag, &RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MIN);
+	//rtc_data_add_par("motor_max_voltage_flag",  &motor_max_voltage_flag,  RTC_TYPE_UINT32, sizeof(motor_max_voltage_flag), update_status_flag, &RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MAX);
 
 	// Motor PID controller coefficients. All [RW]
 	rtc_data_add_par("K_p", &K_p, RTC_TYPE_FLOAT, sizeof(K_p), NULL, NULL);
@@ -338,13 +353,13 @@ void rtc_user_init(void)
 	rtc_data_add_par("pid_error_derivative", &pid_error_derivative, RTC_TYPE_FLOAT, sizeof(pid_error_derivative), rtc_data_trigger_read_only, NULL);
 
 	// PID numeric error flag. If set, there was a numerical error PID calculations. [RW]
-	rtc_data_add_par("pid_numeric_error_flag",  &pid_numeric_error_flag,  RTC_TYPE_UINT32, sizeof(pid_numeric_error_flag), NULL, NULL);
+	//rtc_data_add_par("pid_numeric_error_flag",  &pid_numeric_error_flag,  RTC_TYPE_UINT32, sizeof(pid_numeric_error_flag), NULL, NULL);
 	
 	// OPTIONLA: Speed safety limit in [rpm], and status flag (sticky). Both [RW].
 	// The limit is a positive number, but the speed safety feature would not look at the sense of rotation, only at the actual speed.
 	rtc_data_add_par("enable_speed_safety_limit",  &enable_speed_safety_limit,  RTC_TYPE_UINT32, sizeof(enable_speed_safety_limit), NULL, NULL);
 	rtc_data_add_par("speed_safety_limit_rpm", &speed_safety_limit_rpm, RTC_TYPE_FLOAT, sizeof(speed_safety_limit_rpm), NULL, NULL);
-	rtc_data_add_par("speed_safety_limit_reached_flag",  &speed_safety_limit_reached_flag,  RTC_TYPE_UINT32, sizeof(speed_safety_limit_reached_flag), NULL, NULL);
+	//rtc_data_add_par("speed_safety_limit_reached_flag",  &speed_safety_limit_reached_flag,  RTC_TYPE_UINT32, sizeof(speed_safety_limit_reached_flag), NULL, NULL);
 	rtc_data_add_par("speed_history", &speed_history, RTC_TYPE_FLOAT, sizeof(speed_history), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("mean_speed_rpm", &mean_speed_rpm, RTC_TYPE_FLOAT, sizeof(mean_speed_rpm), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("max_speed_rpm", &max_speed_rpm, RTC_TYPE_FLOAT, sizeof(max_speed_rpm), rtc_data_trigger_read_only, NULL);
@@ -374,7 +389,7 @@ void rtc_user_init(void)
 	update_encoder_transfer_f(encoder_low_voltage, encoder_low_speed_rpm, encoder_high_voltage, encoder_high_speed_rpm);
 
 	// Actions. Set to nonzero value to activate and the triggers will do the rest.
-	rtc_data_add_par("reset_error_and_status_flags", &request_reset_error_and_status_flags, RTC_TYPE_UINT32, sizeof(request_reset_error_and_status_flags), reset_error_and_status_flags, NULL);
+	rtc_data_add_par("reset_status_flags", &request_reset_status_flags, RTC_TYPE_UINT32, sizeof(request_reset_status_flags), reset_status_flags, NULL);
 	rtc_data_add_par("reset_pid_error_terms", &request_reset_pid_error_terms, RTC_TYPE_UINT32, sizeof(request_reset_pid_error_terms), reset_pid_error_terms, NULL);
 
 	// Lasers:
@@ -421,7 +436,7 @@ void rtc_user_main(void)
 	// the operator resets the corresponding flag. Critical conditions:
 	//   * speed safety limit was reached
 	//   * motor set level value by PID controller was not a valid fp number
-	if (speed_safety_limit_reached_flag || pid_numeric_error_flag)
+	if (get_status_flags(RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED | RIG_STATUS_PID_NUMERIC_ERROR))
 		goto finalise;
 	
 	// If speed limit is enabled, compute the mean speed, and shut down the rig
@@ -439,7 +454,7 @@ void rtc_user_main(void)
 				shutdown_motor();
 				
 				safety_triggered_speed_rpm = mean_speed_rpm;
-				speed_safety_limit_reached_flag = 1;
+				set_status_flags(RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED);
 				goto finalise;
 			}
 		}
@@ -501,7 +516,8 @@ void rtc_user_main(void)
 			
 			// Shut down the system right now if the PID output value does not make sense!
 			if (isfinite(motor_voltage_level) == 0) {
-				pid_numeric_error_flag = 1;
+				set_status_flags(RIG_STATUS_PID_NUMERIC_ERROR);
+				
 				shutdown_motor();
 				goto finalise;
 			
@@ -521,10 +537,10 @@ void rtc_user_main(void)
 				// Rotation direction is set by the sign of voltage level, so ignore the sign.
 				if (motor_set_level < motor_min_voltage) {
 					motor_set_level = motor_min_voltage;
-					motor_min_voltage_flag = 1;
+					set_status_flags(RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MIN);
 				} else if (motor_set_level > motor_max_voltage) {
 					motor_set_level = motor_max_voltage;
-					motor_max_voltage_flag = 1;
+					set_status_flags(RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MAX);
 				}
 				
 				// Actuate!
@@ -729,12 +745,28 @@ void shutdown_motor(void)
 	rtc_set_output(output_channel_motor_set_level, 0.0f);
 }
 
-// Stop the system, clear the error flags and controller error terms
-void reset_error_and_status_flags(void *new_value, void *trigger_data)
+// Returns the value of the status bits indexed by a value idx
+static uint32_t get_status_flags(uint32_t idx)
 {
-	motor_min_voltage_flag = 0;
-	motor_max_voltage_flag = 0;
-	speed_safety_limit_reached_flag = 0;
+	return status_flags & idx;
+}
+
+// Sets to one status bits indexed by a value idx
+static void set_status_flags(uint32_t idx)
+{
+	status_flags |= idx;
+}
+
+// Set to zero status bits indexed by a value idx
+static void clear_status_flags(uint32_t idx)
+{
+	status_flags &= ~idx;
+}
+
+// Clear all status and error flags
+void reset_status_flags(void *new_value, void *trigger_data)
+{
+	clear_status_flags(status_flags); // Whatever is set is going to be cleared
 }
 
 void reset_pid_error_terms(void *new_value, void *trigger_data)
