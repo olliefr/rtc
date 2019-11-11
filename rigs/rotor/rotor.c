@@ -73,6 +73,19 @@
 // to be "at rest".
 #define RPM_AT_REST_CUTOFF 10
 
+// Use a single 32-bit unsigned integer for flags. This is faster than using a whole integer
+// for *each* flag and also allows to save them all easily. But this does require a certain
+// support infrastructure to use from Matlab easily.
+//
+// !!! Never change the existing values as the data might have been saved using it.
+//     Use the next available value for the new flags.
+//
+#define RIG_FLAG_UNKNOWN_ERROR              (0x1u << 0)
+#define RIG_FLAG_PID_NUMERIC_ERROR          (0x1u << 1)
+#define RIG_FLAG_SPEED_SAFETY_LIMIT_REACHED (0x1u << 2)
+#define RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MIN  (0x1u << 3)
+#define RIG_FLAG_MOTOR_VOLTAGE_CLIP_AT_MAX  (0x1u << 4)
+
 /* ********************************************************************** */
 /* * Types ************************************************************** */
 /* ********************************************************************** */
