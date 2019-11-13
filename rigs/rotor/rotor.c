@@ -350,8 +350,8 @@ void rtc_user_init(void)
 	rtc_data_add_par("encoder_speed", &encoder_speed, RTC_TYPE_FLOAT, sizeof(encoder_speed), rtc_data_trigger_read_only, NULL);
 	
 	// Rotary Encoder: the linear transfer function (voltage to SPEED). These are computed by the triggers for the above four variables.
-	rtc_data_add_par("encoder_transfer_f_gradient", &encoder_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_gradient), rtc_data_trigger_read_only, NULL);
-	rtc_data_add_par("encoder_transfer_f_intercept", &encoder_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_intercept), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("encoder_transfer_f_gradient", &encoder_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_gradient), NULL, NULL);
+	rtc_data_add_par("encoder_transfer_f_intercept", &encoder_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_intercept), NULL, NULL);
 
 	// Actions. Set to nonzero value to activate and the triggers will do the rest.
 	rtc_data_add_par("reset_status_flags", &request_reset_status_flags, RTC_TYPE_UINT32, sizeof(request_reset_status_flags), reset_status_flags, NULL);
