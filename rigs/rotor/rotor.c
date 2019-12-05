@@ -206,7 +206,7 @@ static float encoder_transfer_f_intercept;
 static uint32_t enable_speed_safety_limit = 1;
 
 // The motor will turn off if this speed is reached in either direction of rotation (rpm)
-static float speed_safety_limit_rpm = 600;
+static uint32_t speed_safety_limit_rpm = 600;
  
 // Indicates that the safety limit has been reached
 //static uint32_t speed_safety_limit_reached_flag;
@@ -230,8 +230,9 @@ static float mean_speed_rpm;
 // The maximum instantaneous speed ever recorded
 static float max_speed_rpm;
 
-// The mean_speed_rpm value that caused activation of the safety stop
-static float safety_triggered_speed_rpm;
+// The mean_speed_rpm value that caused activation of the safety stop, 
+// rounded to the nearest integer
+static uint32_t safety_triggered_speed_rpm;
 
 /******************************************************************************
  *
@@ -334,11 +335,11 @@ void rtc_user_init(void)
 	// OPTIONLA: Speed safety limit in [rpm], and status flag (sticky). Both [RW].
 	// The limit is a positive number, but the speed safety feature would not look at the sense of rotation, only at the actual speed.
 	rtc_data_add_par("enable_speed_safety_limit",  &enable_speed_safety_limit,  RTC_TYPE_UINT32, sizeof(enable_speed_safety_limit), NULL, NULL);
-	rtc_data_add_par("speed_safety_limit_rpm", &speed_safety_limit_rpm, RTC_TYPE_FLOAT, sizeof(speed_safety_limit_rpm), NULL, NULL);
+	rtc_data_add_par("speed_safety_limit_rpm", &speed_safety_limit_rpm, RTC_TYPE_UINT32, sizeof(speed_safety_limit_rpm), NULL, NULL);
 	rtc_data_add_par("speed_history", &speed_history, RTC_TYPE_FLOAT, sizeof(speed_history), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("mean_speed_rpm", &mean_speed_rpm, RTC_TYPE_FLOAT, sizeof(mean_speed_rpm), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("max_speed_rpm", &max_speed_rpm, RTC_TYPE_FLOAT, sizeof(max_speed_rpm), rtc_data_trigger_read_only, NULL);
-	rtc_data_add_par("safety_triggered_speed_rpm", &safety_triggered_speed_rpm, RTC_TYPE_FLOAT, sizeof(safety_triggered_speed_rpm), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("safety_triggered_speed_rpm", &safety_triggered_speed_rpm, RTC_TYPE_UINT32, sizeof(safety_triggered_speed_rpm), rtc_data_trigger_read_only, NULL);
 
 	// The analogue voltage as read from the encoder and as a proportion of 2PI. This latter is computed from former.
 	rtc_data_add_par("encoder_input_channel",  &encoder_input_channel, RTC_TYPE_UINT32, sizeof(encoder_input_channel),  NULL, NULL);
@@ -697,7 +698,7 @@ void reset_speed_history(void)
 	speed_history_idx  = 0;
 	mean_speed_rpm = 0.0f;
 	max_speed_rpm  = 0.0f;
-	safety_triggered_speed_rpm = 0.0f;
+	safety_triggered_speed_rpm = 0;
 }
 
 // Return the sum of an array of floating-point values.
