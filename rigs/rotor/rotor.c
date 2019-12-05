@@ -387,7 +387,8 @@ void rtc_user_init(void)
 /* ************************************************************************ */
 void rtc_user_main(void)
 {
-	static int32_t led = 0;
+	// LED status, on or off. Will change state at every mod 2pi time slice
+	static int32_t led;
 
 	// Will be set to filtered or unfiltered value, depending on the settings
 	static float pid_error;
