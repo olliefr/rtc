@@ -81,7 +81,7 @@
 // !!! Never change the existing values as the data might have been saved using it.
 //     Use the next available value for the new flags.
 //
-#define RIG_STATUS_OK                         0u
+#define RIG_STATUS_OK                         (0x0u)
 #define RIG_STATUS_UNKNOWN_ERROR              (0x1u << 0)
 #define RIG_STATUS_SETUP_NOT_COMPLETED        (0x1u << 1)
 #define RIG_STATUS_PID_NUMERIC_ERROR          (0x1u << 2)
@@ -190,8 +190,8 @@ static float lasers_transfer_f_gradient  =   75.0f;
 static float lasers_transfer_f_intercept = -225.0f;
 
 // Rotary Encoder: voltage as read, and its interpretation as angular position,
-// as the proportion of 2*pi. The encoder's analogue signal is connected to input zero.
-static uint32_t encoder_input_channel;
+// as the proportion of 2*pi. The encoder's analogue output is connected to the input zero.
+static uint32_t encoder_input_channel = 0;
 static float encoder_voltage;
 static float encoder_angular_position;
 static float encoder_angular_position_prev;
@@ -537,7 +537,7 @@ finalise:
   		led = !led;
   		period_start = 1;
   	}
-}
+} // END OF main()
 
 
 /*
