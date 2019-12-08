@@ -27,7 +27,7 @@ STARTERWARE_LIB=-ldrivers  \
 		-lusblib
 
 # Compiler flags for this code
-CFLAGS+=-ffast-math -fsingle-precision-constant -I$(APP_ROOT)include -std=gnu99 -pedantic
+CFLAGS+=-fsingle-precision-constant -I$(APP_ROOT)include -std=gnu99 -pedantic
 
 # Target mode
 TARGET_MODE?=Release
