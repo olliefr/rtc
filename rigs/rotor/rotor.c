@@ -5,6 +5,10 @@
 **
 ** "A FOOLISH CONSISTENCY IS THE HOBGOBLIN OF LITTLE MINDS..." ~ R.W. Emerson
 **
+** This file relies on floating point exceptions for isfinite, and isnan 
+** to work, so --ffast-math should not be enabled when compiling. This is a departure
+** from a stock RTC distribution.
+**
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions are
 ** met:
@@ -170,7 +174,7 @@ static float lasers_distance_mm[NUMBER_OF_LASERS];
 // Lasers: distance to the reflector at rest. Every experiment should make note of this!
 //         the default value is NAN for easy spotting of cases when the Matlab script
 //         has not taken note of the distance at rest.
-static float lasers_distance_at_rest[NUMBER_OF_LASERS] = {NAN};
+static float lasers_distance_at_rest[NUMBER_OF_LASERS];
 
 // Lasers: voltage limits. For Omron ZX1-300 lasers with 250 Ohm resistor in 
 // the signal conditioner, the signal varies from 1 to 5 volts. 
@@ -183,15 +187,16 @@ static float lasers_far_field_limit_volt  = 1.0f;
 //   * the resistor value in signal conditioner is 250 [Ohm]
 //
 // The calculations are in the `rig/Computing Lasers Transfer Function.pdf` file.
-static float lasers_transfer_f_gradient  =   75.0f;
-static float lasers_transfer_f_intercept = -225.0f;
+static float lasers_transfer_f_gradient;
+static float lasers_transfer_f_intercept;
 
 // Rotary Encoder: voltage as read, and its interpretation as angular position,
 // as the proportion of 2*pi. The encoder's analogue output is connected to the input zero.
 static uint32_t encoder_input_channel = 0;
 static float encoder_voltage;
 static float encoder_angular_position;
-static float encoder_angular_position_prev;
+static float encoder_angular_position_before;
+static float encoder_rest_threshold_rpm = 5.0f;
 static float encoder_speed_rpm;
 static float encoder_speed;     // in rad/s
 
@@ -211,7 +216,7 @@ static uint32_t speed_safety_limit_rpm = 600;
 // Buffer to collect last N speed readings for averaging. Used for 
 // enforcing the speed safety limit. The buffer wraps over at the end, using
 // the index variable. The speed values are in rpm.
-static float speed_history[SPEED_HISTORY_SIZE];
+static float speed_history[SPEED_HISTORY_SIZE] = {0};
  
 // Speed history buffer index
 static uint32_t speed_history_idx;
@@ -237,9 +242,13 @@ static float pid_error_filter_freq = 0.025f; // fraction of sampling frequency
 static struct biquad_filter_t input_filter;
 static float pid_error_filter_state[INPUT_FILTER_N_STATE];  // filtering encoder output
 
+// Motor control, sets the necessary variables:
+// Set the target speed to target_rpm. Returns old target speed in rpm.
+float set_target_speed(float target_rpm);
+
 // Requests. Set to nonzero to activate. The triggers on update will do the job.
 static uint32_t request_reset_status_flags;
-static uint32_t request_reset_pid_error_terms;
+static uint32_t request_reset_pid;
 
 /* ************************************************************************ */
 /* * Internal prototypes ************************************************** */
@@ -258,7 +267,7 @@ void update_forcing_freq(void *new_value, void *trigger_data);   // Trigger
 void update_target_speed(void *new_value, void *trigger_data);   // Trigger
 void update_input_filter(void *new_value, void *trigger_data);   // Trigger
 void reset_status_flags(void *new_value, void *trigger_data);    // Trigger
-void reset_pid_error_terms(void *new_value, void *trigger_data); // Trigger
+void reset_pid(void *new_value, void *trigger_data); // Trigger
 
 void reset_speed_history(void);
 
@@ -273,7 +282,6 @@ void stop_motor(void);
 float sum(float list[], uint32_t n);
 float rad2rpm(float rad);
 float rpm2rad(float rpm);
-
 
 /* ************************************************************************ */
 /* * Function definitions ************************************************* */
@@ -308,7 +316,9 @@ void rtc_user_init(void)
 	// Motor: the limits on input voltage are set in the motor controller settings
 	rtc_data_add_par("motor_min_voltage", &motor_min_voltage, RTC_TYPE_FLOAT, sizeof(motor_min_voltage), NULL, NULL);
 	rtc_data_add_par("motor_max_voltage", &motor_max_voltage, RTC_TYPE_FLOAT, sizeof(motor_max_voltage), NULL, NULL);
-
+	motor_min_voltage = nanf("");
+	motor_max_voltage = nanf("");
+	
 	// Motor PID controller coefficients. All [RW]
 	rtc_data_add_par("K_p", &K_p, RTC_TYPE_FLOAT, sizeof(K_p), NULL, NULL);
 	rtc_data_add_par("K_i", &K_i, RTC_TYPE_FLOAT, sizeof(K_i), NULL, NULL);
@@ -332,23 +342,26 @@ void rtc_user_init(void)
 	rtc_data_add_par("mean_speed_rpm", &mean_speed_rpm, RTC_TYPE_FLOAT, sizeof(mean_speed_rpm), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("max_insta_speed_rpm", &max_insta_speed_rpm, RTC_TYPE_FLOAT, sizeof(max_insta_speed_rpm), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("safety_triggered_speed_rpm", &safety_triggered_speed_rpm, RTC_TYPE_UINT32, sizeof(safety_triggered_speed_rpm), rtc_data_trigger_read_only, NULL);
-
+	
 	// The analogue voltage as read from the encoder and as a proportion of 2PI. This latter is computed from former.
 	rtc_data_add_par("encoder_input_channel",  &encoder_input_channel, RTC_TYPE_UINT32, sizeof(encoder_input_channel),  NULL, NULL);
 	rtc_data_add_par("encoder_voltage", &encoder_voltage, RTC_TYPE_FLOAT, sizeof(encoder_voltage), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("encoder_angular_position", &encoder_angular_position, RTC_TYPE_FLOAT, sizeof(encoder_angular_position), rtc_data_trigger_read_only, NULL);
 
 	// Rotary Encoder: speed, computed or read, depending on the encoder type
+	rtc_data_add_par("encoder_rest_threshold_rpm", &encoder_rest_threshold_rpm, RTC_TYPE_FLOAT, sizeof(encoder_rest_threshold_rpm), NULL, NULL);
 	rtc_data_add_par("encoder_speed_rpm", &encoder_speed_rpm, RTC_TYPE_FLOAT, sizeof(encoder_speed_rpm), rtc_data_trigger_read_only, NULL);
 	rtc_data_add_par("encoder_speed", &encoder_speed, RTC_TYPE_FLOAT, sizeof(encoder_speed), rtc_data_trigger_read_only, NULL);
 	
 	// Rotary Encoder: the linear transfer function (voltage to SPEED). These are computed by the triggers for the above four variables.
 	rtc_data_add_par("encoder_transfer_f_gradient", &encoder_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_gradient), NULL, NULL);
 	rtc_data_add_par("encoder_transfer_f_intercept", &encoder_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(encoder_transfer_f_intercept), NULL, NULL);
-
+	encoder_transfer_f_gradient  = nanf("");
+	encoder_transfer_f_intercept = nanf("");
+	
 	// Actions. Set to nonzero value to activate and the triggers will do the rest.
 	rtc_data_add_par("reset_status_flags", &request_reset_status_flags, RTC_TYPE_UINT32, sizeof(request_reset_status_flags), reset_status_flags, NULL);
-	rtc_data_add_par("reset_pid_error_terms", &request_reset_pid_error_terms, RTC_TYPE_UINT32, sizeof(request_reset_pid_error_terms), reset_pid_error_terms, NULL);
+	rtc_data_add_par("reset_pid", &request_reset_pid, RTC_TYPE_UINT32, sizeof(request_reset_pid), reset_pid, NULL);
 
 	// Lasers:
 	//   * raw output in volts. assumes lasers are connected by their index (laser 1 to input 1) [RO]
@@ -367,10 +380,12 @@ void rtc_user_init(void)
 		rtc_data_add_par(laser_name_volt, &in_volt[i+1], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 		rtc_data_add_par(laser_name_distance, &lasers_distance_mm[i], RTC_TYPE_FLOAT, sizeof(float), rtc_data_trigger_read_only, NULL);
 	}
-	rtc_data_add_par("lasers_distance_at_rest", &lasers_distance_at_rest, RTC_TYPE_FLOAT, sizeof(lasers_distance_at_rest), NULL, NULL);
-	rtc_data_add_par("lasers_transfer_f_gradient", &lasers_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_gradient), rtc_data_trigger_read_only, NULL);
-	rtc_data_add_par("lasers_transfer_f_intercept", &lasers_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_intercept), rtc_data_trigger_read_only, NULL);
-
+	rtc_data_add_par("lasers_distance_at_rest", &lasers_distance_at_rest, RTC_TYPE_FLOAT, sizeof(lasers_distance_at_rest), rtc_data_trigger_read_only, NULL);
+	rtc_data_add_par("lasers_transfer_f_gradient", &lasers_transfer_f_gradient, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_gradient), NULL, NULL);
+	rtc_data_add_par("lasers_transfer_f_intercept", &lasers_transfer_f_intercept, RTC_TYPE_FLOAT, sizeof(lasers_transfer_f_intercept), NULL, NULL);
+	lasers_transfer_f_gradient  = nanf("");
+	lasers_transfer_f_intercept = nanf("");
+	
 	// Set up the filters
 	update_filter(&input_filter, pid_error_filter_freq);
 	input_filter.order = INPUT_FILTER_ORDER;
@@ -385,127 +400,146 @@ void rtc_user_main(void)
 	// Will be set to filtered or unfiltered value, depending on the settings
 	static float pid_error;
 	
-	// STEP 0. Units and quantity conversions
-	lasers_compute_distance_from_voltage();
-	encoder_compute_speed_from_voltage();
-	
-	// STEP 1. Update mean and maximum instantaneous speed values
-	max_insta_speed_rpm = (encoder_speed_rpm > max_insta_speed_rpm) ? encoder_speed_rpm : max_insta_speed_rpm;
-	
-	speed_history[speed_history_idx++] = encoder_speed_rpm;	
-	if (speed_history_idx >= SPEED_HISTORY_SIZE) {
-		speed_history_idx = 0;
-	}
-	mean_speed_rpm = sum(speed_history, SPEED_HISTORY_SIZE) / SPEED_HISTORY_SIZE;
-
-	// STEP 2. Speed safety check: non-zero value means the speed limit is enabled, also 
-	// compute the mean speed, and shut down the rig if the limit has been exceeded
-	if ((speed_safety_limit_rpm > 0) && (fabs(mean_speed_rpm) >= speed_safety_limit_rpm)) {
-		
-		stop_motor();
-		
-		safety_triggered_speed_rpm = mean_speed_rpm;
-		set_status_flags(RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED);
-	}
-	
-	// STEP 3. The main control decision tree, based on the system status:
-	//
-	// Only apply control if a critical error has not been previously registered, otherwise procrastinate instead.
-	if (get_status_flags(RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED | RIG_STATUS_PID_NUMERIC_ERROR) == 0) {
-	
-		// Sensing and PID output is computed at every tick, as long as the system status
-		// is without critical errors. But the actuation is only done at the beginning
-		// of a new period of time, defined by the forcing_freq_hz variable...
-		
-		// Both filtered and raw PID error is calculated. This is useful for comparison.
-		pid_error_raw = target_speed - encoder_speed;
-		pid_error_filtered = biquad_filter(pid_error_raw, &input_filter, pid_error_filter_state);
-		
-		// Decide whether to use filtered or raw error value.
-		pid_error = enable_pid_error_filter ? pid_error_filtered : pid_error_raw;
-
-		// Error integral computed as per its standard definition.
-		// FIXME is there a risk of integral windup?
-		pid_error_integral += (pid_error * TIMER_PERIOD_FLOAT);
-		
-		// Error derivate -- multiplication by frequency is the same as division by the period
-		pid_error_derivative = (pid_error - pid_error_before) * TIMER_FREQ;
-		
-		// Compute the motor set level using PID principles.
-		motor_voltage_level = K_p * pid_error + K_i * pid_error_integral + K_d * pid_error_derivative;
-		
-		// Prepare for the next time slice by rotating the error term
-		pid_error_before = pid_error;
-	
-		/* ********************************************************************** */
-		/*  Real-time control */
-		/* ********************************************************************** */
-		
-		// * The control is run at forcing_freq_hz rate. The time_mod_2pi is set up in 
-		//   the way that a new period begins exactly at forcing_freq_hz rate.
-		//
-		// * This controller requires that ESCON is set to (?). Analogue input ? signal sets 
-		//   the direction of rotation (using sign) and enables the motor. Analogue input ? 
-		//   signal sets the magnitude of the current. The limits on the magnitude are set
-		//   in the ESCON software and duplicated in this firmware in motor_{min|max}_voltage
-		//   variables.
-		//
-		// * The PID controller above computes the voltage value not knowing that the sign 
-		//   is handled by the motor_enable signal, so care must be taken to ignore the sign
-		//   where it is not needed:
-		//
-		if (period_start) {		
-			if (rpm != 0.0f) {
+	// STEP ?. Configuration not complete yet
+	if (get_status_flags(RIG_STATUS_SETUP_NOT_COMPLETED) != 0)
+	{		
+		// Transfer to working state only if all necessary variables had been set.
+		// Otherwise the speed history is computed using wrong values, because both 
+		// the gradient and the intercept must be set for correct operation.
+		if (isfinite(motor_min_voltage) && isfinite(motor_max_voltage) &&
+			isfinite(encoder_rest_threshold_rpm) &&
+			isfinite(encoder_transfer_f_gradient) && isfinite(encoder_transfer_f_intercept) &&
+			isfinite(lasers_transfer_f_gradient) && isfinite(lasers_transfer_f_intercept) &&
+			(motor_min_voltage < motor_max_voltage)) {
 				
-				// Shut down the system right now if the PID output value does not make sense!
-				if (isfinite(motor_voltage_level) == 0) {
-					
-					stop_motor();
-					set_status_flags(RIG_STATUS_PID_NUMERIC_ERROR);
-					
-				// The PID output value is numerically valid, carry on the actuation. Rather 
-				// than fiddling with the value produced by the PID controller, split it into
-				// the sense of rotation and the magnitude (set level) and send both signals
-				// to the right outputs.
+			clear_status_flags(RIG_STATUS_SETUP_NOT_COMPLETED);
+		}
+	} else {
+	
+		// STEP 0. Units and quantity conversions
+		lasers_compute_distance_from_voltage();
+		encoder_compute_speed_from_voltage();
+		
+		// STEP 1. Update mean and maximum instantaneous speed values
+		max_insta_speed_rpm = (encoder_speed_rpm > max_insta_speed_rpm) ? encoder_speed_rpm : max_insta_speed_rpm;
+		
+		speed_history[speed_history_idx++] = encoder_speed_rpm;	
+		if (speed_history_idx >= SPEED_HISTORY_SIZE) {
+			speed_history_idx = 0;
+		}
+		mean_speed_rpm = sum(speed_history, SPEED_HISTORY_SIZE) / SPEED_HISTORY_SIZE;
+
+		// STEP 2. Speed safety check: non-zero value means the speed limit is enabled, also 
+		// compute the mean speed, and shut down the rig if the limit has been exceeded
+		if ((speed_safety_limit_rpm > 0) && (fabs(mean_speed_rpm) >= speed_safety_limit_rpm)) {
+			
+			set_target_speed(0.0f); // this will stop the motor as well
+			
+			safety_triggered_speed_rpm = mean_speed_rpm;
+			set_status_flags(RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED);
+		}
+		
+		// STEP 3. The main control decision tree, based on the system status:
+		//
+		// Only apply control if a critical error has not been previously registered, otherwise procrastinate instead.
+		if (get_status_flags(RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED | RIG_STATUS_PID_NUMERIC_ERROR) == 0) {
+		
+			// Recalculate PID output if the target speed was set:
+			if (rpm != 0.0f) {	
+				// Sensing and PID output is computed at every tick, as long as the system status
+				// is without critical errors. But the actuation is only done at the beginning
+				// of a new period of time, defined by the forcing_freq_hz variable...
+				
+				// Both filtered and raw PID error is calculated. This is useful for comparison.
+				pid_error_raw = target_speed - encoder_speed;
+				pid_error_filtered = biquad_filter(pid_error_raw, &input_filter, pid_error_filter_state);
+				
+				// Decide whether to use filtered or raw error value.
+				pid_error = enable_pid_error_filter ? pid_error_filtered : pid_error_raw;
+
+				// Error integral computed as per its standard definition.
+				// FIXME is there a risk of integral windup?
+				pid_error_integral += (pid_error * TIMER_PERIOD_FLOAT);
+				
+				// Error derivate -- multiplication by frequency is the same as division by the period
+				pid_error_derivative = (pid_error - pid_error_before) * TIMER_FREQ;
+				
+				// Compute the motor set level using PID principles.
+				motor_voltage_level = K_p * pid_error + K_i * pid_error_integral + K_d * pid_error_derivative;
+				
+				// Prepare for the next time slice by rotating some terms
+				pid_error_before = pid_error;
+				encoder_angular_position_before = encoder_angular_position;
+			}
+			
+			// PID output must make sense at all times, otherwise halt the system:
+			if (isfinite(motor_voltage_level) == 0) {
+				stop_motor();
+				set_status_flags(RIG_STATUS_PID_NUMERIC_ERROR);
+			}
+			
+			/* ********************************************************************** */
+			/*  Real-time control */
+			/* ********************************************************************** */
+			
+			// * The control is run at forcing_freq_hz rate. The time_mod_2pi is set up in 
+			//   the way that a new period begins exactly at forcing_freq_hz rate.
+			//
+			// * This controller requires that ESCON is set to (?). Analogue input ? signal sets 
+			//   the direction of rotation (using sign) and enables the motor. Analogue input ? 
+			//   signal sets the magnitude of the current. The limits on the magnitude are set
+			//   in the ESCON software and duplicated in this firmware in motor_{min|max}_voltage
+			//   variables.
+			//
+			// * The PID controller above computes the voltage value not knowing that the sign 
+			//   is handled by the motor_enable signal, so care must be taken to ignore the sign
+			//   where it is not needed:
+			//
+			// The PID output value must make sense at all times, shut down otherwise
+			// Shut down the system right now if the PID output value does not make sense!
+			if (period_start) {
+				
+				if (rpm == 0.0f) {
+					set_target_speed(0.0f); // this will stop the motor as well
 				} else {
-					// The sense of rotation is given by the motor_enable signal sign:
-					//   * CW is (?)
-					//   * CCW is (?)
-					
-					// The voltage level is a magnitude, hence always non-negative
-					float motor_set_level = fabs(motor_voltage_level);
-					
-					// Clip motor voltage levels, if necessary. Record the fact of clipping the output.
-					// Rotation direction is set by the sign of voltage level, so ignore the sign.
-					if (motor_set_level < motor_min_voltage) {
-						motor_set_level = motor_min_voltage;
-						set_status_flags(RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MIN);
-					} else if (motor_set_level > motor_max_voltage) {
-						motor_set_level = motor_max_voltage;
-						set_status_flags(RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MAX);
+					if (get_status_flags(RIG_STATUS_PID_NUMERIC_ERROR) == 0) {
+						
+						// The PID output value is numerically valid, carry on the actuation. Rather 
+						// than fiddling with the value produced by the PID controller, split it into
+						// the sense of rotation and the magnitude (set level) and send both signals
+						// to the right outputs.
+		
+						// The sense of rotation is given by the motor_enable signal sign:
+						//   * CW is (?)
+						//   * CCW is (?)
+							
+						// The voltage level is a magnitude, hence always non-negative
+						float motor_set_level = fabs(motor_voltage_level);
+							
+						// Clip motor voltage levels, if necessary. Record the fact of clipping the output.
+						// Rotation direction is set by the sign of voltage level, so ignore the sign.
+						if (motor_set_level < motor_min_voltage) {
+							motor_set_level = motor_min_voltage;
+							set_status_flags(RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MIN);
+						} else if (motor_set_level > motor_max_voltage) {
+							motor_set_level = motor_max_voltage;
+							set_status_flags(RIG_STATUS_MOTOR_VOLTAGE_CLIP_AT_MAX);
+						}
+							
+						// Actuate!
+						rtc_set_output(output_channel_motor_direction, 
+							motor_voltage_level > 0 ? MAXON_OFF : MAXON_ON);
+						rtc_set_output(output_channel_enable_motor, MAXON_ON);
+						rtc_set_output(output_channel_motor_set_level, motor_set_level);
 					}
-					
-					// Actuate!
-					rtc_set_output(output_channel_motor_direction, 
-						motor_voltage_level > 0 ? MAXON_OFF : MAXON_ON);
-					rtc_set_output(output_channel_enable_motor, MAXON_ON);
-					rtc_set_output(output_channel_motor_set_level, motor_set_level);
 				}
 				
-			// Target RPM is zero, make sure the motor is stopped.	
-			} else {
-				rtc_set_output(output_channel_motor_direction, MAXON_OFF);
-				rtc_set_output(output_channel_enable_motor,    MAXON_OFF);
-				rtc_set_output(output_channel_motor_set_level, MAXON_OFF);
-			}
-		}
-	} // The end of PID & actuation section - only runs if no speed safety or numeric issues
-	
-	// STEP Y: Save the current angular position
-	encoder_angular_position_prev = encoder_angular_position;
-	
-	// STEP W: Time keeping. Mod 2pi time drives the led and is periodic. 
-	//         This is always run at the end of each time slice.
+			} // Period start: actuation only happens at these times
+		} // The end of PID & actuation section - only runs if no speed safety or numeric issues
+		// FIXME maybe more robust option would be to stop motor on every step if error set?
+	}
+
+	// STEP W: Time keeping. Mod 2pi time drives the led and is periodic. Run at every time step.
   	period_start = 0;
   	time_mod_2pi += time_delta*forcing_freq;
   	if (time_mod_2pi > M_2PI) {
@@ -561,8 +595,17 @@ void update_forcing_freq(void *new_value, void *trigger_data)
    The target speed in rad/s is recomputed when this happens. */
 void update_target_speed(void *new_value, void *trigger_data)
 {
-	/* Extract the data from the pointers */
-	float new_rpm = *((float *)new_value);
+	// Extract the data from the pointers
+	float target_rpm = *((float *)new_value);
+	
+	// The trigger does not have the facilities to return data, so return value ignored
+	set_target_speed(target_rpm);
+}
+
+// Set the target speed to target_rpm. Returns old target speed in rpm.
+float set_target_speed(float target_rpm)
+{
+	float old_target_rpm = rpm;
 	
 	// The motor is stopped by setting the target to *EXACTLY* zero.
 	// Since this is a well-defined specific value, we should not have any
@@ -570,18 +613,16 @@ void update_target_speed(void *new_value, void *trigger_data)
 	// constant rather than compute the value which "equals" zero. That value
 	// may be *VERY* close, but it won't be exactly zero, so this won't work.
 	// Always set the rpm value to exactly zero.
-	if (fabs(new_rpm) == 0.0f) {
+	if (fabs(target_rpm) == 0.0f) {
 		stop_motor();
-	// If new value is not zero, check whether the motor needs starting up,
-	// in which case PID error terms and speed history need resetting. 
-	} else if (rpm == 0.0f) {
-		reset_pid_error_terms(NULL, NULL);
-		reset_speed_history(); // TODO let speed history run forever, no problem with that
+		reset_pid(NULL, NULL);
 	}
 	
-	// Keep both rpm and rad/s values... FIXME why exactly?
-	rpm = new_rpm;
-	target_speed = rpm2rad(new_rpm);
+	// Keep both rpm and rad/s values
+	rpm = target_rpm;
+	target_speed = rpm2rad(target_rpm);
+	
+	return old_target_rpm;
 }
 
 /* **********************************************************************
@@ -631,9 +672,9 @@ void update_input_filter(void *new_value, void *trigger_data)
 // Shuts down the motor and updates the system's state variables to reflect that.
 void stop_motor(void)
 {
-	rtc_set_output(output_channel_enable_motor, MAXON_OFF);
-	rtc_set_output(output_channel_motor_direction, 0.0f);
-	rtc_set_output(output_channel_motor_set_level, 0.0f);
+	rtc_set_output(output_channel_enable_motor,    MAXON_OFF);
+	rtc_set_output(output_channel_motor_direction, MAXON_OFF);
+	rtc_set_output(output_channel_motor_set_level, MAXON_OFF);
 }
 
 // Returns the value of the status bits indexed by a value idx
@@ -651,6 +692,10 @@ static void set_status_flags(uint32_t idx)
 // Set to zero status bits indexed by a value idx
 static void clear_status_flags(uint32_t idx)
 {
+	// Reset the PID controller when clearing certain flags
+	if ((RIG_STATUS_PID_NUMERIC_ERROR | RIG_STATUS_SPEED_SAFETY_LIMIT_REACHED) & idx) {
+		set_target_speed(0.0f);
+	}
 	status_flags &= ~idx;
 }
 
@@ -660,13 +705,15 @@ void reset_status_flags(void *new_value, void *trigger_data)
 	clear_status_flags(status_flags); // Whatever is set is going to be cleared
 }
 
-void reset_pid_error_terms(void *new_value, void *trigger_data)
+void reset_pid(void *new_value, void *trigger_data)
 {
 	pid_error_before     = 0.0f;
 	pid_error_raw        = 0.0f;
 	pid_error_filtered   = 0.0f;
 	pid_error_integral   = 0.0f;
 	pid_error_derivative = 0.0f;
+	
+	motor_voltage_level = 0.0f;
 }
 
 void reset_speed_history(void)
@@ -725,20 +772,27 @@ void lasers_compute_distance_from_voltage(void)
 	}
 }
 
-// Maxon Motor Escon 50/5 encoder returns speed in rpm (as voltage)
+// Maxon Escon 50/5 encoder returns speed in rpm (as voltage). The motor cannot really do
+// more than 50 rpm when the load is attached, so consider 5 rpm the cut-off rate for "at rest"
+// position by default.
 void encoder_compute_speed_from_voltage(void)
 {
 	encoder_voltage = in_volt[encoder_input_channel];
 	
 	encoder_speed_rpm = encoder_voltage * encoder_transfer_f_gradient + encoder_transfer_f_intercept;
+	if (encoder_speed_rpm < encoder_rest_threshold_rpm) {
+		encoder_speed_rpm = 0;
+	}
 	encoder_speed = rpm2rad(encoder_speed_rpm);
 }
 
+/*
 void encoder_compute_speed_from_position(void)
 {
-	encoder_speed = (encoder_angular_position_prev - encoder_angular_position) / time_delta;
+	encoder_speed = (encoder_angular_position_before - encoder_angular_position) / time_delta;
 	encoder_speed_rpm = rad2rpm(encoder_speed);
 }
+*/
 
 // TODO this got to go to general RTC code, it's useful!
 void bbb_reboot(void *new_value, void *trigger_data)
