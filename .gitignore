@@ -36,8 +36,5 @@ binary/*
 # Data files
 *.mat
 
-# Starterware
-starterware
-
 # Matlab temporary files for rig interfaces
 rigs/**/*.asv

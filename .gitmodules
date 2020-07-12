@@ -1,0 +1,3 @@
+[submodule "starterware"]
+	path = starterware
+	url = https://github.com/olliefr/starterware
